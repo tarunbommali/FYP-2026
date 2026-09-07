@@ -1,0 +1,24 @@
+global:
+  resolve_timeout: 5m
+  # Gmail SMTP Configuration
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'your-sender-address@gmail.com'
+  smtp_auth_username: 'your-sender-address@gmail.com'
+  # Paste your 16-character Google App Password (without spaces) below:
+  smtp_auth_password: 'xxxx xxxx xxxx xxxx'
+  smtp_require_tls: true
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+  receiver: 'gmail-notifications'
+
+receivers:
+  - name: 'gmail-notifications'
+    email_configs:
+      - to: 'your-recipient-address@gmail.com'
+        send_resolved: true
+        headers:
+          subject: '[IDS ALERT] {{ .Status | toUpper }}: {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'

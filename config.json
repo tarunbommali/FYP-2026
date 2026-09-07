@@ -1,0 +1,76 @@
+{
+    "_comment": "IDS Inference Engine + Alert Engine Configuration (Stacking Ensemble)",
+
+    "binary_threshold": 0.50,
+    "_threshold_notes": [
+        "Default: 0.50 (conservative, suitable for live traffic).",
+        "Phase 3 training produced threshold=0.8624 (dataset-specific, optimistic).",
+        "Increase toward 0.8 to reduce false positives on known-clean networks.",
+        "Decrease toward 0.3 to increase recall (catch more attacks at cost of FP rate).",
+        "Valid range: (0.0, 1.0) exclusive."
+    ],
+
+    "meta_learner_threshold": 0.50,
+    "_meta_learner_threshold_notes": [
+        "Decision boundary for the Logistic Regression meta-learner.",
+        "The meta-learner combines RF, XGBoost Binary, and ISO Forest outputs.",
+        "Meta-learner probability >= this threshold → classified as ATTACK.",
+        "Default: 0.50 (standard logistic regression decision boundary).",
+        "Valid range: (0.0, 1.0) exclusive."
+    ],
+
+    "unknown_attack_iso_threshold": 0.70,
+    "_unknown_attack_iso_threshold_notes": [
+        "ISO anomaly score at or above this → UNKNOWN_ATTACK (skip multiclass).",
+        "Isolation Forest alone determines novelty detection.",
+        "Higher values → fewer unknown classifications (more conservative).",
+        "Valid range: (0.0, 1.0). Recommended: 0.60 – 0.80."
+    ],
+
+    "alert_min_severity": "LOW",
+    "_alert_min_severity_notes": [
+        "Minimum severity level to generate an alert.",
+        "Options: LOW | MEDIUM | HIGH | CRITICAL",
+        "Set to MEDIUM to reduce noise on high-volume networks."
+    ],
+
+    "alert_min_confidence": 0.50,
+    "_alert_min_confidence_notes": [
+        "Minimum attack_probability to generate an alert.",
+        "Flows with probability below this are suppressed even if attack=True.",
+        "Valid range: (0.0, 1.0). Recommended: 0.50 – 0.80."
+    ],
+
+    "alert_suppressed_types": [],
+    "_alert_suppressed_types_notes": [
+        "Attack types to never alert on. Example: [\"Bot\"] to suppress Bot alerts.",
+        "Use only if you have verified the model is producing false positives for a type."
+    ],
+
+    "alert_suppressed_ports": [],
+    "_alert_suppressed_ports_notes": [
+        "Destination ports to never alert on. Example: [80, 443] to suppress web traffic alerts.",
+        "Use sparingly — suppressing ports hides legitimate attacks on those ports."
+    ],
+
+    "alert_dedup_window_s": 60,
+    "_alert_dedup_window_s_notes": [
+        "Deduplication window in seconds.",
+        "Alerts with the same (src_ip, dst_ip, attack_type) within this window are suppressed.",
+        "Prevents alert flood during sustained attacks (e.g. 1000 DDoS flows/sec = 1 alert/60s).",
+        "Set to 0 to disable deduplication (not recommended for production).",
+        "Minimum enforced value: 1 second."
+    ],
+
+    "telegram": {
+        "enabled": false,
+        "bot_token": "",
+        "chat_id": "",
+        "min_severity": "HIGH",
+        "_telegram_notes": [
+            "Enable real-time Telegram Bot alerts for high-priority events.",
+            "Requires bot_token (from @BotFather) and chat_id (e.g. from @userinfobot).",
+            "min_severity filtering prevents noise. Recommended: HIGH or CRITICAL."
+        ]
+    }
+}

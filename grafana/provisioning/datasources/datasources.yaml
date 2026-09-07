@@ -1,0 +1,21 @@
+apiVersion: 1
+
+datasources:
+  # ── Prometheus ── live IDS metrics (host machine port 9090) ──────────────
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: "5s"
+
+  # ── SQLite ── alert history via frser-sqlite-datasource plugin ──
+  - name: SQLite
+    uid: SQLite
+    type: frser-sqlite-datasource
+    access: proxy
+    jsonData:
+      path: /data/alerts/alerts.db

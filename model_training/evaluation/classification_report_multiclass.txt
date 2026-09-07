@@ -1,0 +1,24 @@
+PHASE 6: Multiclass Classification Report
+Dataset: CICIDS2017
+
+                            precision    recall  f1-score   support
+
+                    BENIGN       1.00      1.00      1.00    429639
+                       Bot       0.65      1.00      0.79       391
+                      DDoS       1.00      1.00      1.00     25603
+             DoS GoldenEye       0.99      1.00      0.99      2056
+                  DoS Hulk       1.00      1.00      1.00     34570
+          DoS Slowhttptest       0.97      0.99      0.98      1046
+             DoS slowloris       0.98      0.99      0.98      1075
+               FTP-Patator       1.00      1.00      1.00      1187
+                Heartbleed       0.40      1.00      0.57         2
+              Infiltration       0.83      0.71      0.77         7
+                  PortScan       0.99      1.00      0.99     18164
+               SSH-Patator       1.00      1.00      1.00       644
+  Web Attack - Brute Force       0.75      0.76      0.75       294
+Web Attack - Sql Injection       0.38      0.75      0.50         4
+          Web Attack - XSS       0.40      0.47      0.43       130
+
+                  accuracy                           1.00    514812
+                 macro avg       0.82      0.91      0.85    514812
+              weighted avg       1.00      1.00      1.00    514812

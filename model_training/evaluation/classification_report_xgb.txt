@@ -1,0 +1,10 @@
+Model: XGBoost
+
+              precision    recall  f1-score   support
+
+      BENIGN       1.00      1.00      1.00    429639
+      ATTACK       1.00      1.00      1.00     85173
+
+    accuracy                           1.00    514812
+   macro avg       1.00      1.00      1.00    514812
+weighted avg       1.00      1.00      1.00    514812

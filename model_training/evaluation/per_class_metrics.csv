@@ -1,0 +1,16 @@
+Class,Support,Precision,Recall,F1,Rare
+BENIGN,429639,1.0,0.9986,0.9993,False
+DoS Hulk,34570,0.9979,0.9994,0.9987,False
+DDoS,25603,0.9989,1.0,0.9994,False
+PortScan,18164,0.9875,0.9993,0.9934,False
+DoS GoldenEye,2056,0.9866,0.9995,0.993,False
+FTP-Patator,1187,0.9983,1.0,0.9992,False
+DoS slowloris,1075,0.978,0.9916,0.9848,False
+DoS Slowhttptest,1046,0.9719,0.9904,0.9811,False
+SSH-Patator,644,1.0,1.0,1.0,False
+Bot,391,0.6533,0.9974,0.7895,False
+Web Attack - Brute Force,294,0.75,0.7551,0.7525,False
+Web Attack - XSS,130,0.3961,0.4692,0.4296,False
+Infiltration,7,0.8333,0.7143,0.7692,True
+Web Attack - Sql Injection,4,0.375,0.75,0.5,True
+Heartbleed,2,0.4,1.0,0.5714,True

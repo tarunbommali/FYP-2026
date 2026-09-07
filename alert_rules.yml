@@ -1,0 +1,61 @@
+# ==============================================================================
+# Prometheus Alerting Rules for Real-Time IDS Pipeline
+# ==============================================================================
+
+groups:
+  - name: ids_pipeline_alerts
+    rules:
+      # Alert when the IDS python application stops emitting metrics
+      - alert: IDSServiceDown
+        expr: up{job="ids_pipeline"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          component: pipeline
+        annotations:
+          summary: "IDS Pipeline is offline"
+          description: "Prometheus cannot scrape metrics from host.docker.internal:9090 for > 15s. Traffic capture and real-time inference may have halted."
+
+      # Alert immediately when critical severity attack flows are recorded
+      - alert: CriticalAttackDetected
+        expr: increase(ids_alerts_severity_total{severity="CRITICAL"}[1m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          component: inference
+        annotations:
+          summary: "Critical Intrusion Attack Detected"
+          description: "One or more CRITICAL severity intrusion attacks were detected by the model ensemble and recorded to alert storage."
+
+      # Alert when attack percentage surges past 25% of total flows
+      - alert: HighAttackRateDetected
+        expr: ids_attack_rate > 0.25
+        for: 30s
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High Attack Rate Detected (> 25%)"
+          description: "Attack rate has exceeded 25% for at least 30s. Current attack proportion: {{ $value | humanizePercentage }}."
+
+      # Alert when Isolation Forest anomaly detections spike
+      - alert: AnomalyDetectionSpike
+        expr: increase(ids_anomalies_total[1m]) > 50
+        for: 1m
+        labels:
+          severity: warning
+          component: anomaly_detection
+        annotations:
+          summary: "Abnormal Anomaly Spike (> 50 in 1m)"
+          description: "Isolation Forest flagged over 50 anomalous flows in the past 60 seconds."
+
+      # Alert when inference latency degrades significantly
+      - alert: HighInferenceLatency
+        expr: ids_inference_latency_ms_sum / ids_inference_latency_ms_count > 50
+        for: 1m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High Inference Latency (> 50ms)"
+          description: "Average inference latency per flow is running high at {{ $value | printf \"%.2f\" }}ms."
