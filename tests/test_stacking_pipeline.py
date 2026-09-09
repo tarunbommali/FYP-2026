@@ -13,9 +13,6 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import json
-import numpy as np
-
 # Suppress XGBoost serialization warnings
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)

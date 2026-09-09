@@ -37,28 +37,21 @@ import socket
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 
-# ---------------------------------------------------------------------------
-# Bootstrap: ensure project root is on sys.path regardless of CWD
-# ---------------------------------------------------------------------------
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-# Force UTF-8 output on Windows (cp1252 terminals break Unicode box chars / emoji)
+# Force UTF-8 output on Windows
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# ---------------------------------------------------------------------------
-# Logging — configured before any IDS imports so all modules pick it up
-# ---------------------------------------------------------------------------
+
 def _configure_logging(level: str) -> None:
-    """Set up structured logging to stdout + rotating file."""
     log_dir = os.path.join(BASE_DIR, "data", "logs")
     os.makedirs(log_dir, exist_ok=True)
 
@@ -70,7 +63,6 @@ def _configure_logging(level: str) -> None:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    # Console handler — force UTF-8 so box-drawing / emoji render on Windows
     import io
     utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace") \
         if hasattr(sys.stdout, "buffer") else sys.stdout
@@ -78,7 +70,6 @@ def _configure_logging(level: str) -> None:
     ch.setFormatter(fmt)
     root.addHandler(ch)
 
-    # Rotating file handler (10 MB × 5 files)
     fh = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, "ids.log"),
         maxBytes=10 * 1024 * 1024,
@@ -92,11 +83,7 @@ def _configure_logging(level: str) -> None:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Deferred imports — after logging is configured
-# ---------------------------------------------------------------------------
 def _import_components():
-    """Import all IDS components (deferred so logging is configured first)."""
     from capture.packet_capture import PacketCapture
     from features.feature_extractor import extract_features
     from inference.predictor import predict_flow
@@ -113,9 +100,6 @@ def _import_components():
     )
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="ids-main",
@@ -188,12 +172,9 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ---------------------------------------------------------------------------
-# Interface listing utility
-# ---------------------------------------------------------------------------
 def _list_interfaces() -> None:
     try:
-        from scapy.arch import get_if_list  # pyrefly: ignore [missing-import]
+        from scapy.arch import get_if_list
         ifaces = get_if_list()
         print("\nAvailable network interfaces:")
         for iface in ifaces:
@@ -205,19 +186,14 @@ def _list_interfaces() -> None:
         print(f"Could not list interfaces: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# FastAPI server launcher (runs in background thread)
-# ---------------------------------------------------------------------------
 def _start_api_server(port: int, alert_mgr) -> None:
-    """Start the FastAPI REST/WebSocket server in a background thread."""
     try:
-        import uvicorn  # pyrefly: ignore [missing-import]
+        import uvicorn
         from api.main import build_app
         app = build_app(alert_mgr)
         logger.info("Starting FastAPI server on http://0.0.0.0:%d", port)
         config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
         server = uvicorn.Server(config)
-        # Run in a daemon thread so it dies with the main process
         t = threading.Thread(target=server.run, daemon=True, name="api-server")
         t.start()
     except ImportError as exc:
@@ -226,21 +202,17 @@ def _start_api_server(port: int, alert_mgr) -> None:
         logger.error("Failed to start API server: %s", exc)
 
 
-# ---------------------------------------------------------------------------
-# Health check helpers
-# ---------------------------------------------------------------------------
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
-    """Return True if the URL responds with HTTP 2xx/3xx within timeout."""
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status < 400
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, OSError):
         return False
 
 
+
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
-    """Return True if a TCP connection to host:port succeeds."""
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -256,11 +228,9 @@ def _tick_conn(ok: bool) -> str:
     return "✅ Connected " if ok else "❌ Unreachable"
 
 
-# ---------------------------------------------------------------------------
-# Startup health dashboard
-# ---------------------------------------------------------------------------
 def _print_health_dashboard(args, models_ok: bool, alert_mgr_ok: bool,
                              worker_pool_ok: bool, capture_ok: bool) -> None:
+
     """Print the full startup health dashboard to stdout."""
     W = 62  # box width
 
@@ -346,12 +316,8 @@ def _print_health_dashboard(args, models_ok: bool, alert_mgr_ok: bool,
     print("\n".join(lines), flush=True)
 
 
-# ---------------------------------------------------------------------------
-# Live rolling status line
-# ---------------------------------------------------------------------------
 def _start_status_ticker(reg, alert_mgr, shutdown_event: threading.Event,
                           interval: float = 10.0) -> None:
-    """Print a compact live status line every `interval` seconds."""
     try:
         import psutil
         _psutil = True
@@ -376,16 +342,13 @@ def _start_status_ticker(reg, alert_mgr, shutdown_event: threading.Event,
                     f"CPU:{cpu}  Mem:{mem}",
                     end="", flush=True
                 )
-            except Exception:
+            except OSError:
                 pass
 
     t = threading.Thread(target=_ticker, daemon=True, name="status-ticker")
     t.start()
 
 
-# ---------------------------------------------------------------------------
-# Main runtime
-# ---------------------------------------------------------------------------
 def main() -> None:
     args = _parse_args()
     _configure_logging(args.log_level)
@@ -394,7 +357,6 @@ def main() -> None:
         _list_interfaces()
         return
 
-    # -- Import all components -----------------------------------------------
     (
         PacketCapture, extract_features, predict_flow,
         AlertManager, start_metrics_server, start_metrics_export_thread,
@@ -580,10 +542,7 @@ def main() -> None:
         logger.exception("Fatal error in capture: %s", exc)
     finally:
         logger.info("Shutting down IDS...")
-        try:
-            reg.system_status.set(0)
-        except Exception:
-            pass
+        reg.system_status.set(0)
         if capture:
             capture.stop()
         time.sleep(1.0)

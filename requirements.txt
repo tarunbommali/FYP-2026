@@ -3,11 +3,9 @@ xgboost
 scikit-learn
 joblib
 scapy
-influxdb-client
 fastapi
 uvicorn
 websockets
-jinja2
 prometheus-client
 psutil
 pyyaml

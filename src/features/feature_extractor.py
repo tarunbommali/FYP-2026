@@ -10,7 +10,6 @@ Reference: CICIDS2017 dataset feature set
           (Canadian Institute for Cybersecurity)
 """
 
-import math
 import statistics
 import logging
 from typing import Dict, List
@@ -19,9 +18,6 @@ from flows.flow import NetworkFlow, PacketRecord
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Feature name constants — must exactly match training column names
-# ---------------------------------------------------------------------------
 FEATURE_NAMES = [
     "Destination Port", "Flow Duration", "Total Fwd Packets",
     "Total Backward Packets", "Total Length of Fwd Packets",
@@ -48,10 +44,6 @@ FEATURE_NAMES = [
     "Idle Mean", "Idle Std", "Idle Max", "Idle Min",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def extract_features(flow: NetworkFlow) -> Dict[str, float]:
     """
@@ -210,10 +202,6 @@ def extract_features(flow: NetworkFlow) -> Dict[str, float]:
     reg.features_extracted_total.inc()
     return {name: features.get(name, 0.0) for name in FEATURE_NAMES}
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _mean(values: List[float]) -> float:
     return statistics.mean(values) if values else 0.0

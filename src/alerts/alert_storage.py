@@ -95,25 +95,13 @@ class AlertStorage:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         self._init_db()
         logger.info("AlertStorage ready: %s", db_path)
 
-    # -----------------------------------------------------------------------
     def insert(self, alert: Alert) -> int:
-        """
-        Persist an alert. Returns the auto-assigned row ID.
-
-        Parameters
-        ----------
-        alert : Alert
-            The alert to store. alert.id is ignored; the DB assigns it.
-
-        Returns
-        -------
-        int
-            The SQLite rowid of the inserted alert.
-        """
         with self._conn() as conn:
             cur = conn.execute(_INSERT, (
                 alert.timestamp,
@@ -133,7 +121,6 @@ class AlertStorage:
                          row_id, alert.attack_type, alert.severity)
             return row_id
 
-    # -----------------------------------------------------------------------
     def recent(self, limit: int = 100) -> List[Alert]:
         """Return the most recent `limit` alerts, newest first."""
         with self._conn() as conn:
@@ -159,11 +146,9 @@ class AlertStorage:
         return {r[0]: r[1] for r in rows}
 
     def total(self) -> int:
-        """Return total number of stored alerts."""
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
 
-    # -----------------------------------------------------------------------
     def _init_db(self) -> None:
         with self._conn() as conn:
             conn.execute(_CREATE_TABLE)
@@ -189,20 +174,33 @@ class AlertStorage:
     @contextmanager
     def _conn(self):
         """Yield a thread-safe connection with WAL mode enabled."""
+        if self._db_path == ":memory:":
+            if not hasattr(self, "_mem_conn") or self._mem_conn is None:
+                self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
+                self._mem_conn.row_factory = sqlite3.Row
+            conn = self._mem_conn
+            try:
+                yield conn
+                conn.commit()
+            except sqlite3.Error:
+                conn.rollback()
+                raise
+            return
+
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")   # safe for concurrent reads
         conn.row_factory = sqlite3.Row
         try:
             yield conn
             conn.commit()
-        except Exception:
+        except sqlite3.Error:
             conn.rollback()
             raise
         finally:
             conn.close()
 
 
-# ---------------------------------------------------------------------------
+
 def _row_to_alert(row: sqlite3.Row) -> Alert:
     return Alert(
         id                  = row["id"],

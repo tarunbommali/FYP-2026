@@ -34,7 +34,7 @@ A production-grade, low-latency **AI-Driven Real-Time Intrusion Detection System
   - **Stage 2 (Multiclass XGBoost)**: Detailed 15-class attack categorization for identified threats. Achieves **99.84% Overall Accuracy** and **99.85% Weighted F1**.
 - **Zero-Day Anomaly Detection**: Unsupervised **Isolation Forest** computes anomaly scores for novel threats with composite risk scoring:
   $$S = 0.65 \times p_{\text{attack}} + 0.35 \times s_{\text{iso}}$$
-- **Intelligent Alert Engine**: Rule-based filtering with a 60-second sliding window deduplication mechanism and persistent storage in **SQLite** (`alerts.db`).
+- **Intelligent Alert Engine & Alertmanager**: Rule-based filtering with a 60-second sliding window deduplication mechanism and persistent storage in **SQLite** (`alerts.db`). Alerts are exposed via Prometheus metrics to **Prometheus Alertmanager** for automated HTML email notifications via Gmail SMTP.
 - **Prometheus & Grafana Integration**: Real-time operational metrics export (flow counts, packet rates, latency, alert counts by severity) rendered on pre-configured Grafana dashboards.
 - **REST & WebSocket API**: Exposes FastAPI endpoints for alert queries, system status, live metric streaming, and interactive Swagger UI.
 
@@ -159,11 +159,14 @@ IDS-Codebase/
 │   ├── inference/                   # Model loader, predictor, worker pool
 │   ├── alerts/                      # Alert rules, deduplication, SQLite persistence
 │   └── monitoring/                  # Prometheus metrics exporter
-├── model_training/                  # Offline model training pipeline (Phases 00 to 06)
+├── alertmanager/                    # Prometheus Alertmanager configuration & templates
+├── alert_rules.yml                  # Prometheus alert rules (HighSeverityAttack, etc.)
+├── model_training/                  # Offline model training pipeline
 ├── models/                          # Trained ML artifacts (.pkl, .json)
 │   ├── binary/                      # XGBoost & Random Forest binary classifiers
 │   ├── multiclass/                  # XGBoost multiclass classifier & LabelEncoder
 │   ├── preprocessing/               # StandardScaler & feature medians
+│   ├── stacking/                    # Logistic Regression meta-learner
 │   └── anomaly/                     # Isolation Forest model
 ├── docs/                            # LaTeX report, Markdown docs, figures, results
 │   ├── documentation.tex            # Full academic LaTeX documentation
@@ -171,7 +174,7 @@ IDS-Codebase/
 │   └── results/                     # Confusion matrices & evaluation plots
 ├── grafana/                         # Grafana dashboard definitions
 ├── config.json                      # Runtime application configuration
-├── docker-compose.yml               # Prometheus + Grafana stack definition
+├── docker-compose.yml               # Prometheus + Alertmanager + Grafana stack definition
 ├── requirements.txt                 # Python dependencies
 └── README.md                        # Project landing document
 ```
@@ -215,14 +218,15 @@ python src/main.py --list-interfaces
 [1] \Device\NPF_{YYYYYYYY-YYYY-YYYY-YYYY-YYYYYYYYYYYY} (Realtek PCIe GbE Family Controller)
 ```
 
-### 3. Launch Monitoring Stack (Prometheus & Grafana)
+### 3. Launch Monitoring Stack (Prometheus, Alertmanager & Grafana)
 
 ```powershell
-docker-compose up -d
+docker compose up -d
 ```
 
 - **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000) *(Default login: `admin` / `admin`)*
-- **Prometheus UI**: [http://localhost:9090](http://localhost:9090)
+- **Prometheus UI**: [http://localhost:9091](http://localhost:9091)
+- **Alertmanager UI**: [http://localhost:9093](http://localhost:9093)
 
 ### 4. Start the IDS Engine
 

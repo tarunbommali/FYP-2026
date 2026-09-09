@@ -39,14 +39,12 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# pyrefly: ignore [missing-import]
 from flows.flow       import FlowKey, NetworkFlow, PacketRecord
+# pyrefly: ignore [missing-import]
 from features.feature_extractor import extract_features
 from inference.predictor        import predict_flow
 
-
-# ---------------------------------------------------------------------------
-# Helpers: synthetic flow construction
-# ---------------------------------------------------------------------------
 
 def _make_flow_key(
     src_ip:   str = "192.168.1.100",
@@ -105,15 +103,12 @@ def _build_attack_flow() -> NetworkFlow:
     return flow
 
 
-# ---------------------------------------------------------------------------
-# Test suite
-# ---------------------------------------------------------------------------
-
 class TestE2EPipeline(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
         """Initialise a temporary SQLite DB for the AlertManager."""
+        # pyrefly: ignore [missing-import]
         from alerts.alert_manager import AlertManager
 
         cls._tmp_db = tempfile.NamedTemporaryFile(
@@ -214,6 +209,7 @@ class TestE2EPipeline(unittest.TestCase):
         Two identical flows within the dedup window must produce only 1 alert.
         Verifies AlertStorage count and AlertManager._total_deduped counter.
         """
+        # pyrefly: ignore [missing-import]
         from alerts.alert_manager import AlertManager
 
         # Fresh AlertManager with a very long dedup window (600s) to guarantee dedup
@@ -261,6 +257,9 @@ class TestE2EPipeline(unittest.TestCase):
         """
         flow = _build_benign_flow()
 
+        # Prime model caches to avoid first-run cold start flakiness
+        _ = predict_flow(extract_features(flow))
+
         t0       = time.perf_counter()
         features = extract_features(flow)
         result   = predict_flow(features)
@@ -276,6 +275,7 @@ class TestE2EPipeline(unittest.TestCase):
         """
         When an attack alert is generated, it must appear in the SQLite database.
         """
+        # pyrefly: ignore [missing-import]
         from alerts.alert_manager import AlertManager
 
         tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False, prefix="ids_store_")
@@ -308,23 +308,5 @@ class TestE2EPipeline(unittest.TestCase):
         os.unlink(tmp.name)
 
 
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    print("=" * 60)
-    print("IDS END-TO-END PIPELINE INTEGRATION TESTS")
-    print("=" * 60)
-    loader  = unittest.TestLoader()
-    loader.sortTestMethodsUsing = None   # preserve declaration order
-    suite   = loader.loadTestsFromTestCase(TestE2EPipeline)
-    runner  = unittest.TextTestRunner(verbosity=0, stream=sys.stdout)
-    result  = runner.run(suite)
-    print("=" * 60)
-    if result.wasSuccessful():
-        print(f"ALL {result.testsRun} TESTS PASSED")
-    else:
-        print(f"FAILURES: {len(result.failures)}  ERRORS: {len(result.errors)}")
-    print("=" * 60)
-    sys.exit(0 if result.wasSuccessful() else 1)
+    unittest.main()

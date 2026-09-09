@@ -211,13 +211,7 @@ Edit `config.json` to adjust detection sensitivity without retraining:
     "alert_min_confidence": 0.50,
     "alert_suppressed_types": [],
     "alert_suppressed_ports": [],
-    "alert_dedup_window_s": 60,
-    "telegram": {
-        "enabled": false,
-        "bot_token": "",
-        "chat_id": "",
-        "min_severity": "HIGH"
-    }
+    "alert_dedup_window_s": 60
 }
 ```
 
@@ -229,35 +223,25 @@ Edit `config.json` to adjust detection sensitivity without retraining:
 | `alert_suppressed_types` | `[]` | e.g. `["Bot"]` — silence specific attack types. |
 | `alert_suppressed_ports` | `[]` | e.g. `[80, 443]` — silence alerts on specific ports. |
 | `alert_dedup_window_s` | `60` | Seconds before the same `(src_ip, dst_ip, attack_type)` can re‑alert. |
-| `telegram.enabled` | `false` | Set `true` to receive Telegram push notifications for alerts. |
-| `telegram.bot_token` | `""` | Bot token from [@BotFather](https://t.me/BotFather). |
-| `telegram.chat_id` | `""` | Your chat ID from [@userinfobot](https://t.me/userinfobot). |
-| `telegram.min_severity` | `"HIGH"` | Only notify for alerts at this severity or above. |
 
 ---
 
-### 2.6 Telegram Alert Notifications (Optional)
+### 2.6 Alertmanager Email Notifications
 
-The IDS can push real-time Telegram messages for high-severity alerts without any third-party service — only Python's built-in `urllib` is used.
+The IDS exposes alert counters via Prometheus. Prometheus evaluates `alert_rules.yml` and forwards firing alerts to Prometheus Alertmanager, which dispatches HTML email notifications via Gmail SMTP.
 
 **Setup steps:**
-1. Open Telegram → message **[@BotFather](https://t.me/BotFather)** → `/newbot` → copy the **bot token**.
-2. Message **[@userinfobot](https://t.me/userinfobot)** → copy your **chat ID**.
-3. Edit `config.json`:
+1. Generate a Google Account App Password for Gmail.
+2. Edit `alertmanager/alertmanager.yml`:
+   * Set `auth_username` to your Gmail address.
+   * Set `auth_password` to your 16-character App Password.
+   * Set `to: 'your-email@gmail.com'` under `email_configs`.
+3. Start the Docker monitoring stack:
+   ```bash
+   docker compose up -d
+   ```
+4. Verify Alertmanager status at `http://localhost:9093`.
 
-```json
-"telegram": {
-    "enabled": true,
-    "bot_token": "<your-bot-token>",
-    "chat_id": "<your-chat-id>",
-    "min_severity": "HIGH"
-}
-```
-
-4. Restart the IDS — no code changes required.
-
-> The `AlertManager` spawns a **daemon thread** per qualifying alert so Telegram I/O never blocks the detection pipeline.
-> Set `min_severity` to `"CRITICAL"` on high-traffic networks to avoid notification spam.
 
 ---
 

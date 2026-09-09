@@ -21,12 +21,6 @@ Severity tiers
 
 from typing import Dict
 
-# ---------------------------------------------------------------------------
-# Attack type base severity (CICIDS2017 classes + UNKNOWN_ATTACK)
-#
-# These reflect the intrinsic danger of each attack category.
-# An attack starts at this base level and can be adjusted by confidence.
-# ---------------------------------------------------------------------------
 _ATTACK_BASE_SEVERITY: Dict[str, str] = {
     # Denial of Service — service disruption → CRITICAL
     "DDoS":              "CRITICAL",

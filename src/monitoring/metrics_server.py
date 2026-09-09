@@ -9,7 +9,7 @@ from prometheus_client import start_http_server
 
 logger = logging.getLogger(__name__)
 
-def start_metrics_server(port: int = 9090) -> None:
+def start_metrics_server(port: int = 8000) -> None:
     """
     Start the Prometheus HTTP endpoint on the given port.
     Grafana scrapes: http://localhost:{port}/metrics

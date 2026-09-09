@@ -140,8 +140,8 @@ if ([string]::IsNullOrWhiteSpace($InterfaceSelected)) {
 
 # 5. Core Execution Loop with Ctrl+C Cleanup Guard
 try {
-    Write-Host "Starting Docker Compose stack (Prometheus & Grafana)..." -ForegroundColor Cyan
-    docker-compose -f $ComposeFile up -d
+    Write-Host "Starting Docker Compose stack (Prometheus, Alertmanager & Grafana)..." -ForegroundColor Cyan
+    docker compose -f $ComposeFile up -d
     if ($LastExitCode -ne 0) {
         Write-Host "[Error] Failed to spin up Docker Compose containers." -ForegroundColor Red
         Exit 1
@@ -151,8 +151,9 @@ try {
     Write-Host "   Capture Interface: $InterfaceSelected" -ForegroundColor Gray
     Write-Host "   Worker Threads:    $Workers" -ForegroundColor Gray
     Write-Host "   FastAPI Port:      http://localhost:8000" -ForegroundColor Gray
-    Write-Host "   Grafana Port:      http://localhost:3001" -ForegroundColor Gray
+    Write-Host "   Grafana Port:      http://localhost:3000" -ForegroundColor Gray
     Write-Host "   Prometheus Port:   http://localhost:9091" -ForegroundColor Gray
+    Write-Host "   Alertmanager Port: http://localhost:9093" -ForegroundColor Gray
     Write-Host "   Press [Ctrl+C] to stop and clean up." -ForegroundColor Yellow
     Write-Host "----------------------------------------------------------" -ForegroundColor Gray
 
@@ -165,7 +166,7 @@ finally {
     Write-Host "Interruption captured. Cleaning up stack..." -ForegroundColor Yellow
     
     Write-Host "Shutting down Docker Compose containers..." -ForegroundColor Cyan
-    docker-compose -f $ComposeFile down
+    docker compose -f $ComposeFile down
     
     Write-Host "Shutdown sequence complete. Goodbye!" -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green

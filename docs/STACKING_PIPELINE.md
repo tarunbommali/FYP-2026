@@ -184,7 +184,7 @@ sequenceDiagram
         
         SEV->>DB: Store alert
         SEV->>PM: Update Prometheus metrics
-        SEV->>AM: Generate alert + Telegram
+        SEV->>AM: Generate alert (SQLite + Prometheus)
     end
 ```
 
@@ -241,7 +241,7 @@ Only for confirmed attacks:
 
 ### Step 8: Severity & Alerting
 - Severity is computed from: `meta_probability * 0.65 + iso_score * 0.35`
-- Results are sent to: SQLite, Prometheus, Grafana, Alert Manager, and optionally Telegram.
+- Results are sent to: SQLite, Prometheus, Grafana, and Prometheus Alertmanager (Email).
 
 ---
 

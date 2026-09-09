@@ -61,13 +61,13 @@ def optimize_thresholds():
     X_test = pd.read_parquet(X_test_path)
     y_test = pd.read_parquet(y_test_path)["Label"].values
 
-    feature_cols = joblib.load(os.path.join(MODELS_DIR, "feature_columns.pkl"))
+    feature_cols = joblib.load(os.path.join(MODELS_DIR, "preprocessing", "multiclass_feature_columns.pkl"))
     X_test = X_test[feature_cols]
 
-    rf_model   = joblib.load(os.path.join(MODELS_DIR, "rf_binary.pkl"))
-    xgb_model  = joblib.load(os.path.join(MODELS_DIR, "xgb_binary.pkl"))
-    iso_model  = joblib.load(os.path.join(MODELS_DIR, "iso_model.pkl"))
-    iso_scaler = joblib.load(os.path.join(MODELS_DIR, "iso_scaler.pkl"))
+    rf_model   = joblib.load(os.path.join(MODELS_DIR, "binary", "rf_binary.pkl"))
+    xgb_model  = joblib.load(os.path.join(MODELS_DIR, "binary", "xgb_binary.pkl"))
+    iso_model  = joblib.load(os.path.join(MODELS_DIR, "anomaly", "isolation_forest.pkl"))
+    iso_scaler = joblib.load(os.path.join(MODELS_DIR, "preprocessing", "scaler.pkl"))
 
     print(f"  Test rows  : {len(X_test):,}")
     print(f"  Attack rows: {int(y_test.sum()):,}  ({y_test.mean()*100:.2f}%)")

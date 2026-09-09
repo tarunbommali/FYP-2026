@@ -77,20 +77,20 @@ def evaluate_models():
     if not os.path.exists(X_test_path) or not os.path.exists(y_test_path):
         raise FileNotFoundError("Test set not found. Run 02_binary_training.py first.")
 
-    thresh_path = os.path.join(MODELS_DIR, "binary_threshold.json")
+    thresh_path = os.path.join(MODELS_DIR, "binary", "binary_threshold.json")
     if not os.path.exists(thresh_path):
         raise FileNotFoundError("binary_threshold.json not found. Run 03_threshold_optimization.py first.")
 
     X_test = pd.read_parquet(X_test_path)
     y_test = pd.read_parquet(y_test_path)["Label"].values
 
-    feature_cols = joblib.load(os.path.join(MODELS_DIR, "feature_columns.pkl"))
+    feature_cols = joblib.load(os.path.join(MODELS_DIR, "preprocessing", "multiclass_feature_columns.pkl"))
     X_test = X_test[feature_cols]
 
-    rf_model   = joblib.load(os.path.join(MODELS_DIR, "rf_binary.pkl"))
-    xgb_model  = joblib.load(os.path.join(MODELS_DIR, "xgb_binary.pkl"))
-    iso_model  = joblib.load(os.path.join(MODELS_DIR, "iso_model.pkl"))
-    iso_scaler = joblib.load(os.path.join(MODELS_DIR, "iso_scaler.pkl"))
+    rf_model   = joblib.load(os.path.join(MODELS_DIR, "binary", "rf_binary.pkl"))
+    xgb_model  = joblib.load(os.path.join(MODELS_DIR, "binary", "xgb_binary.pkl"))
+    iso_model  = joblib.load(os.path.join(MODELS_DIR, "anomaly", "isolation_forest.pkl"))
+    iso_scaler = joblib.load(os.path.join(MODELS_DIR, "preprocessing", "scaler.pkl"))
 
     with open(thresh_path, "r") as f:
         thresh = json.load(f)

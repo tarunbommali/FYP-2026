@@ -766,7 +766,7 @@ def predict_flow(features: dict) -> dict:
 \subsubsection{Alert Manager}
 \label{sec:core_alert}
 
-The Alert Manager orchestrates rule filtering, 60-second deduplication (keyed by \texttt{src\_ip}, \texttt{dst\_ip}, \texttt{attack\_type}), severity scoring, SQLite persistence (WAL mode), optional real-time Telegram Bot notifications, and WebSocket streaming.
+The Alert Manager orchestrates rule filtering, 60-second deduplication (keyed by \texttt{src\_ip}, \texttt{dst\_ip}, \texttt{attack\_type}), severity scoring, SQLite persistence (WAL mode), Prometheus metric incrementing, and WebSocket streaming.
 
 \begin{lstlisting}[language=Python, caption=Alert Manager Process Logic]
 def process(self, prediction: dict, flow: NetworkFlow) -> Optional[Alert]:
@@ -1301,7 +1301,7 @@ The existing \texttt{AlertManager} provides rule filtering, deduplication, and S
 
     \item \textbf{Slack Webhook Notification}: Post alert cards to a Slack channel via the Slack Incoming Webhooks API (HTTP POST with JSON payload). The card should include attack type, severity, src/dst IP, and timestamp. A single HTTPS call per unique alert; deduplication window prevents duplicate messages.
 
-    \item \textbf{Telegram Bot Notification}: Send alert messages to a Telegram chat via the Bot API (\texttt{sendMessage} endpoint). Lightweight, free, and does not require server-side infrastructure. Suitable for individual analyst or on-call team notifications.
+    \item \textbf{Prometheus Alertmanager Integration}: Deliver alert notifications via Prometheus Alertmanager routing, supporting enterprise email and webhook delivery channels while keeping the IDS detection loop decoupled.
 
     \item \textbf{Generic Webhook Support}: Accept a list of user-configured HTTPS endpoints in \texttt{config.json} and POST a standardised JSON payload (matching the \texttt{PredictionResult} schema) to each registered URL. This enables integration with any third-party system (PagerDuty, OpsGenie, custom SIEM ingestion endpoints) without modifying the IDS core.
 \end{enumerate}

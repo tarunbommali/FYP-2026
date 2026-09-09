@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-09-07 13:32:55",
+  "evaluation_type": "Offline Flow-Level Runtime Inference",
+  "dataset": "CICIDS2017 Held-Out Test Set (X_test_binary.parquet)",
+  "total_flows_evaluated": 50,
+  "errors": 0,
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "roc_auc": 1.0,
+    "pr_auc": 1.0,
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.0
+  },
+  "confusion_matrix": {
+    "true_negatives": 42,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_positives": 8
+  },
+  "latency_stats": {
+    "mean_ms": 67.0251680000365,
+    "median_ms": 66.29415000043082,
+    "p95_ms": 71.8036249999386,
+    "p99_ms": 78.30776500008142,
+    "min_ms": 57.09410000054049,
+    "max_ms": 79.90590000008524,
+    "total_elapsed_sec": 3.3654540999996243,
+    "flows_per_second": 14.856836110171754
+  },
+  "attack_type_distribution": {
+    "BENIGN": 42,
+    "DDoS": 5,
+    "DoS Hulk": 3
+  },
+  "severity_distribution": {
+    "NONE": 42,
+    "CRITICAL": 8
+  }
+}

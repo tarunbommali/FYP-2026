@@ -22,7 +22,6 @@ Usage
 import logging
 import threading
 import time
-from typing import Optional
 
 from monitoring import metrics_registry as reg
 
@@ -72,8 +71,7 @@ def start_metrics_export_thread(
     return t
 
 
-# ---------------------------------------------------------------------------
-def _export_loop(alert_mgr, flow_mgr: Optional[object], interval: float) -> None:
+def _export_loop(alert_mgr, flow_mgr, interval: float) -> None:
     """Main loop — runs forever, exiting when the process ends (daemon thread)."""
     # Lazy import psutil so the module loads even if psutil is absent
     try:
@@ -95,72 +93,46 @@ def _export_loop(alert_mgr, flow_mgr: Optional[object], interval: float) -> None
 
 
 def _export_tick(alert_mgr, flow_mgr, has_psutil: bool) -> None:
-    """Single export tick — update all gauge values."""
+    reg.uptime_seconds.set(time.time() - _start_time)
 
-    # -- Uptime --------------------------------------------------------------
-    try:
-        reg.uptime_seconds.set(time.time() - _start_time)
-    except Exception:
-        pass
+    now = time.time()
+    packets = float(reg.packets_total._value.get())
+    flows = float(reg.flows_total._value.get())
+    last_ts = _last_rate_sample["timestamp"]
 
-    # -- Packets/sec and flows/sec ------------------------------------------
-    try:
-        now = time.time()
-        packets = float(reg.packets_total._value.get())
-        flows = float(reg.flows_total._value.get())
-        last_ts = _last_rate_sample["timestamp"]
+    if last_ts is not None:
+        elapsed = max(now - last_ts, 0.001)
+        reg.packets_per_second.set(
+            max((packets - _last_rate_sample["packets"]) / elapsed, 0.0)
+        )
+        reg.flows_per_second.set(
+            max((flows - _last_rate_sample["flows"]) / elapsed, 0.0)
+        )
 
-        if last_ts is not None:
-            elapsed = max(now - last_ts, 0.001)
-            reg.packets_per_second.set(
-                max((packets - _last_rate_sample["packets"]) / elapsed, 0.0)
-            )
-            reg.flows_per_second.set(
-                max((flows - _last_rate_sample["flows"]) / elapsed, 0.0)
-            )
+    _last_rate_sample["timestamp"] = now
+    _last_rate_sample["packets"] = packets
+    _last_rate_sample["flows"] = flows
 
-        _last_rate_sample["timestamp"] = now
-        _last_rate_sample["packets"] = packets
-        _last_rate_sample["flows"] = flows
-    except Exception:
-        pass
-
-    # -- Active flows --------------------------------------------------------
     if flow_mgr is not None:
-        try:
-            reg.active_flows.set(flow_mgr.active_flow_count)
-        except Exception:
-            pass
-    # (active_flows is also updated per-flow in main.py's on_flow_complete)
+        reg.active_flows.set(flow_mgr.active_flow_count)
 
-    # -- Alert rate ----------------------------------------------------------
-    try:
-        reg.alert_rate_gauge.set(alert_mgr.alert_rate)
-    except Exception:
-        pass
+    reg.alert_rate_gauge.set(alert_mgr.alert_rate)
 
-    # -- Attack rate ---------------------------------------------------------
-    try:
-        attacks = float(reg.attack_total._value.get())
-        predictions = float(reg.predictions_total._value.get())
-        reg.attack_rate.set(attacks / max(predictions, 1.0))
-    except Exception:
-        pass
+    attacks = float(reg.attack_total._value.get())
+    predictions = float(reg.predictions_total._value.get())
+    reg.attack_rate.set(attacks / max(predictions, 1.0))
 
-    # -- CPU & memory --------------------------------------------------------
     if has_psutil:
-        try:
-            import psutil  # pyrefly: ignore [missing-import]
-            cpu = psutil.cpu_percent(interval=None)   # non-blocking
-            mem = psutil.virtual_memory().percent
-            reg.cpu_usage_percent.set(cpu)
-            reg.memory_usage_percent.set(mem)
-            logger.debug(
-                "Metrics tick | active_flows=%s | alert_rate=%.4f | cpu=%.1f%% | mem=%.1f%%",
-                flow_mgr.active_flow_count if flow_mgr else "n/a",
-                alert_mgr.alert_rate,
-                cpu,
-                mem,
-            )
-        except Exception as exc:
-            logger.debug("psutil export failed: %s", exc)
+        import psutil
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory().percent
+        reg.cpu_usage_percent.set(cpu)
+        reg.memory_usage_percent.set(mem)
+        logger.debug(
+            "Metrics tick | active_flows=%s | alert_rate=%.4f | cpu=%.1f%% | mem=%.1f%%",
+            flow_mgr.active_flow_count if flow_mgr else "n/a",
+            alert_mgr.alert_rate,
+            cpu,
+            mem,
+        )
+

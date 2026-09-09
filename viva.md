@@ -34,7 +34,7 @@ The cleanup you performed improves maintainability and makes the repository easi
 | FastAPI Integration  | ✅ Complete |
 | Alert Engine         | ✅ Complete |
 | SQLite Storage       | ✅ Complete |
-| Telegram Notifications | ✅ Complete |
+| Prometheus Alertmanager | ✅ Complete |
 | Prometheus Metrics   | ✅ Complete |
 | Grafana Dashboard    | ✅ Complete |
 | Integration Tests    | ✅ Passing  |
@@ -158,15 +158,14 @@ It contains modern attack scenarios and realistic traffic patterns compared with
 
 ---
 
-## Why was Telegram chosen for real-time notifications?
+## Why was Prometheus Alertmanager chosen for real-time notifications?
 
-Telegram was chosen because:
+Prometheus Alertmanager was chosen because:
 
-* It requires no third-party Python library — only Python's built-in `urllib` is used.
-* The Telegram Bot API is straightforward and free.
-* Notifications are dispatched in a daemon background thread so they never block the detection pipeline.
-* Severity filtering (`min_severity`) prevents notification fatigue on high-traffic networks.
-* It can be enabled/disabled at runtime by editing `config.json` — no code changes or restarts of the full stack required.
+* It decouples alert detection from notification delivery — the Python IDS only exports metrics and evaluates local alert rules, avoiding external network I/O in the detection loop.
+* Prometheus evaluates declarative alert rules (`alert_rules.yml`) on scraped metrics and fires alerts directly to Alertmanager.
+* Alertmanager provides native deduplication, grouping, rate-limiting, and routing to standard email (SMTP) without requiring proprietary bot APIs.
+* Separation of concerns: the ML runtime focuses strictly on packet capture, feature extraction, and inference.
 
 ---
 
@@ -176,6 +175,32 @@ The project attempts to bridge the gap between:
 
 * offline academic model training
 * and deployable real-time IDS systems with monitoring and alerting capabilities.
+
+---
+
+## What are the known evaluation methodology constraints in the current pipeline?
+
+* **Threshold Optimization on Test Data**: In the initial binary prototype pipeline (`03_threshold_optimization.py`), the threshold was evaluated on the 20% test slice. The multiclass pipeline (`05_multiclass_training.py`) correctly adopted a 70/10/20 train/validation/test split, which is the recommended architectural target for future binary re-training.
+* **Meta-Learner Training Split**: The initial logistic regression meta-learner (`train_meta_learner.py`) was fitted on predictions from the 20% test slice. In rigorous production re-training, an isolated validation split or K-fold out-of-fold cross-validation should be used to avoid data leakage.
+* **Data Imbalance**: Several minor attack classes (e.g. Infiltration, Heartbleed) have very low support in CICIDS2017, leading to wider confidence variance for rare classes.
+
+---
+
+## Architectural Distinctions: Live Capture vs. Offline Flow Inference vs. Model Evaluation
+
+| Paradigm | Input Pipeline | Processing Chain | Primary Purpose |
+| :--- | :--- | :--- | :--- |
+| **Live Runtime** | Live NIC via Npcap | Packet $\rightarrow$ FlowManager $\rightarrow$ FeatureExtractor (78 features) $\rightarrow$ `predict_flow()` | Real-time network threat detection |
+| **Offline Flow Inference** | Held-Out Test Parquet (`X_test_binary.parquet`) | Row dict (78 features) $\rightarrow$ `predict_flow()` | Validates complete deployed runtime inference pipeline against unseen flows |
+| **Formal Model Evaluation** | Held-Out Test Parquet (`X_test_binary.parquet`) | Batch DataFrame $\rightarrow$ `model.predict_proba()` directly | Evaluates standalone algorithmic model performance (`04_model_evaluation.py`) |
+
+> **Key Terminology Defense:**
+> * Do not refer to Parquet test rows as "test packets" — they are **test flow feature vectors**.
+> * Do not refer to Parquet evaluation as "PCAP replay" — it is **offline flow-level runtime inference**.
+> * "PCAP replay" is strictly reserved for packet ingestion: `raw packets -> FlowManager -> FeatureExtractor -> Predictor`.
+
+> **Recommended Panel Defense Narrative:**
+> *"The CICIDS2017 dataset is divided into training and test subsets. The training subset is used to fit the machine-learning models, while the isolated test subset is passed through the same inference function used by the real-time IDS (`predict_flow`). This enables evaluation of the deployed inference logic without requiring packet replay. For real-time operation, the same inference function receives flow features generated from Npcap-captured traffic."*
 
 ---
 

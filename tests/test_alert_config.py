@@ -98,6 +98,49 @@ class TestAlertConfiguration(unittest.TestCase):
         self.assertIn("depends_on", prom)
         self.assertIn("alertmanager", prom["depends_on"])
 
+    def test_telegram_removed_from_config_and_code(self):
+        import json
+        config_path = os.path.join(BASE_DIR, "config.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertNotIn("telegram", cfg, "config.json must not contain 'telegram' block")
+
+        from alerts.alert_manager import AlertManager
+        am = AlertManager(db_path=":memory:")
+        self.assertFalse(hasattr(am, "_telegram_config"), "AlertManager must not have _telegram_config")
+        self.assertFalse(hasattr(am, "_send_telegram_notification"), "AlertManager must not have _send_telegram_notification")
+
+        # Verify zero occurrences in src/
+        src_dir = os.path.join(BASE_DIR, "src")
+        for root, _, files in os.walk(src_dir):
+            for file in files:
+                if file.endswith(".py"):
+                    path = os.path.join(root, file)
+                    with open(path, "r", encoding="utf-8", errors="ignore") as pf:
+                        content = pf.read().lower()
+                        self.assertNotIn("telegram", content, f"Found 'telegram' reference in {path}")
+
+    def test_config_fail_fast_on_invalid_json(self):
+        import tempfile
+        from alerts.alert_rules import AlertRules
+        from alerts.alert_manager import AlertManager
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            tf.write("{malformed json content: true,")
+            bad_json_path = tf.name
+
+        try:
+            with self.assertRaises(ValueError):
+                AlertRules(bad_json_path)
+
+            with self.assertRaises(ValueError):
+                AlertManager._load_dedup_window(bad_json_path)
+        finally:
+            if os.path.exists(bad_json_path):
+                os.unlink(bad_json_path)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

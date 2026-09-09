@@ -214,48 +214,55 @@ class ModelManager:
 
     @staticmethod
     def _load_config_threshold() -> "float | None":
-        """Read binary_threshold from config.json if present, else return None."""
         if not os.path.exists(CONFIG_PATH):
             return None
         try:
             with open(CONFIG_PATH, "r") as f:
                 cfg = json.load(f)
-            val = cfg.get("binary_threshold")
-            if val is not None:
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in config file {CONFIG_PATH}: {exc}") from exc
+        except OSError as exc:
+            raise OSError(f"Could not read config file {CONFIG_PATH}: {exc}") from exc
+
+        val = cfg.get("binary_threshold")
+        if val is not None:
+            try:
                 val = float(val)
-                if not (0.0 < val < 1.0):
-                    raise ValueError(f"binary_threshold must be in (0, 1), got {val}")
-                return val
-        except Exception as exc:
-            logger.warning("Could not read binary_threshold from config.json: %s", exc)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"binary_threshold must be a float, got {val}") from exc
+            if not (0.0 < val < 1.0):
+                raise ValueError(f"binary_threshold must be in (0, 1), got {val}")
+            return val
         return None
 
     @staticmethod
     def _load_config_float(key: str, default: float) -> float:
-        """Read a float value from config.json, falling back to default."""
         if not os.path.exists(CONFIG_PATH):
             return default
         try:
             with open(CONFIG_PATH, "r") as f:
                 cfg = json.load(f)
-            val = cfg.get(key)
-            if val is not None:
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in config file {CONFIG_PATH}: {exc}") from exc
+        except OSError as exc:
+            raise OSError(f"Could not read config file {CONFIG_PATH}: {exc}") from exc
+
+        val = cfg.get(key)
+        if val is not None:
+            try:
                 val = float(val)
-                if not (0.0 < val < 1.0):
-                    raise ValueError(f"{key} must be in (0, 1), got {val}")
-                return val
-        except Exception as exc:
-            logger.warning("Could not read %s from config.json: %s", key, exc)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"{key} must be a float, got {val}") from exc
+            if not (0.0 < val < 1.0):
+                raise ValueError(f"{key} must be in (0, 1), got {val}")
+            return val
         return default
 
 
+
 def _path(filename: str) -> str:
-    """Resolve artifact filename to its full path using the sub-folder map."""
     subdir = ModelManager._REQUIRED_FILES.get(filename, MODELS_DIR)
     return os.path.join(subdir, filename)
 
 
-# ---------------------------------------------------------------------------
-# Module-level singleton — imported by predictor.py
-# ---------------------------------------------------------------------------
 MODELS = ModelManager()

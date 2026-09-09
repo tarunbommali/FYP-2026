@@ -35,102 +35,66 @@ Usage
 import json
 import logging
 import os
-import threading
 import time
-import urllib.parse
-import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Lock
 from typing import Dict, Optional, Tuple
 
 from alerts.alert import Alert
 from alerts.alert_rules import AlertRules
-# pyrefly: ignore [missing-import]
 from alerts.alert_storage import AlertStorage
 from flows.flow import NetworkFlow
-from monitoring.prometheus_metrics import METRICS
+from monitoring import metrics_registry as reg
 
 logger = logging.getLogger(__name__)
 
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_DIR = os.path.dirname(SRC_DIR)
-CONFIG_PATH  = os.path.join(BASE_DIR, "config.json")
-DB_PATH      = os.path.join(BASE_DIR, "data", "alerts", "alerts.db")
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+DB_PATH = os.path.join(BASE_DIR, "data", "alerts", "alerts.db")
 
-# Dedup cache entry
-_DedupKey = Tuple[str, str, str]   # (src_ip, dst_ip, attack_type)
+# Dedup cache key: (src_ip, dst_ip, attack_type)
+_DedupKey = Tuple[str, str, str]
 
 
 @dataclass
 class _DedupEntry:
     first_seen: float
-    last_seen:  float
-    count:      int = 1
+    last_seen: float
+    count: int = 1
 
 
 class AlertManager:
     """
-    Single entry point for the alert pipeline.
-
-    Parameters
-    ----------
-    db_path     : str
-        Path to the SQLite database. Defaults to data/alerts/alerts.db.
-    config_path : str
-        Path to config.json for rule and dedup window overrides.
+    Orchestrates alert rule validation, deduplication, and SQLite persistence.
     """
 
     def __init__(
         self,
-        db_path:     str = DB_PATH,
+        db_path: str = DB_PATH,
         config_path: str = CONFIG_PATH,
     ) -> None:
-        self._rules   = AlertRules(config_path)
+        self._rules = AlertRules(config_path)
         self._storage = AlertStorage(db_path)
-        self._lock    = Lock()
+        self._lock = Lock()
 
-        # Dedup window from config (default 60s)
         self._dedup_window: float = self._load_dedup_window(config_path)
-        self._dedup_cache:  Dict[_DedupKey, _DedupEntry] = {}
+        self._dedup_cache: Dict[_DedupKey, _DedupEntry] = {}
 
-        # Telegram bot configuration
-        self._telegram_config: dict = self._load_telegram_config(config_path)
-
-        # Prometheus-ready counters — thread-safe via self._lock
-        self._total_flows:      int = 0
-        self._total_alerts:     int = 0
+        self._total_flows: int = 0
+        self._total_alerts: int = 0
         self._total_suppressed: int = 0
-        self._total_deduped:    int = 0
+        self._total_deduped: int = 0
         self._severity_counts: Dict[str, int] = {
             "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0,
         }
 
-        logger.info(
-            "AlertManager ready | db=%s | dedup_window=%.0fs | telegram_enabled=%s",
-            db_path, self._dedup_window, self._telegram_config.get("enabled", False),
-        )
+        logger.info("AlertManager ready | db=%s | dedup_window=%.0fs", db_path, self._dedup_window)
 
-    # -----------------------------------------------------------------------
     def process(self, prediction: dict, flow: NetworkFlow) -> Optional[Alert]:
-        """
-        Evaluate a completed flow and store an alert if warranted.
-
-        Parameters
-        ----------
-        prediction : dict
-            Return value from predict_flow().
-        flow : NetworkFlow
-            The completed flow — provides IP/port/protocol metadata.
-
-        Returns
-        -------
-        Alert | None
-            The stored Alert if one was raised, None otherwise.
-        """
         with self._lock:
             self._total_flows += 1
 
-        # -- Rule filter -----------------------------------------------------
         dst_port = flow.key.dst_port
         should_alert, reason = self._rules.should_alert(prediction, dst_port=dst_port)
         if not should_alert:
@@ -139,7 +103,6 @@ class AlertManager:
             logger.debug("Alert suppressed | reason=%s", reason)
             return None
 
-        # -- Deduplication ---------------------------------------------------
         dedup_key: _DedupKey = (
             flow.key.src_ip,
             flow.key.dst_ip,
@@ -152,18 +115,16 @@ class AlertManager:
             if entry is not None:
                 age = now - entry.first_seen
                 if age < self._dedup_window:
-                    # Within dedup window — suppress, bump counter
                     entry.last_seen = now
                     entry.count    += 1
                     self._total_deduped += 1
-                    METRICS.record_dedup()
+                    reg.alerts_deduped_total.inc()
                     logger.debug(
                         "Dedup suppressed | key=%s | count=%d | age=%.1fs",
                         dedup_key, entry.count, age,
                     )
                     return None
                 else:
-                    # Window expired — reset entry for a fresh alert
                     self._dedup_cache[dedup_key] = _DedupEntry(
                         first_seen=now, last_seen=now
                     )
@@ -172,7 +133,6 @@ class AlertManager:
                     first_seen=now, last_seen=now
                 )
 
-        # -- Build and store alert -------------------------------------------
         alert = Alert(
             timestamp          = Alert.now_utc(),
             src_ip             = flow.key.src_ip,
@@ -194,11 +154,7 @@ class AlertManager:
         try:
             self._storage.insert(alert)
         except Exception as exc:
-            from monitoring import metrics_registry as reg
-            try:
-                reg.alerts_failed_total.inc()
-            except Exception:
-                pass
+            reg.alerts_failed_total.inc()
             logger.error("Failed to write alert to SQLite database: %s", exc)
             raise
 
@@ -208,7 +164,8 @@ class AlertManager:
             if sev in self._severity_counts:
                 self._severity_counts[sev] += 1
 
-        METRICS.record_alert(alert)
+        reg.alerts_total.inc()
+        reg.alerts_severity_total.labels(severity=alert.severity).inc()
 
         logger.warning(
             "ALERT #%d | %s | %s -> %s:%d | sev=%s | prob=%.4f",
@@ -217,45 +174,47 @@ class AlertManager:
             alert.severity, alert.attack_probability,
         )
 
-        self._send_telegram_notification(alert)
-
         return alert
-
-    # -----------------------------------------------------------------------
-    # Metrics accessors (consumed by Phase 10 Prometheus exporter)
-    # -----------------------------------------------------------------------
 
     @property
     def total_flows(self) -> int:
-        with self._lock: return self._total_flows
+        with self._lock:
+            return self._total_flows
 
     @property
     def total_alerts(self) -> int:
-        with self._lock: return self._total_alerts
+        with self._lock:
+            return self._total_alerts
 
     @property
     def total_suppressed(self) -> int:
-        with self._lock: return self._total_suppressed
+        with self._lock:
+            return self._total_suppressed
 
     @property
     def total_deduped(self) -> int:
-        with self._lock: return self._total_deduped
+        with self._lock:
+            return self._total_deduped
 
     @property
     def critical_alerts(self) -> int:
-        with self._lock: return self._severity_counts["CRITICAL"]
+        with self._lock:
+            return self._severity_counts["CRITICAL"]
 
     @property
     def high_alerts(self) -> int:
-        with self._lock: return self._severity_counts["HIGH"]
+        with self._lock:
+            return self._severity_counts["HIGH"]
 
     @property
     def medium_alerts(self) -> int:
-        with self._lock: return self._severity_counts["MEDIUM"]
+        with self._lock:
+            return self._severity_counts["MEDIUM"]
 
     @property
     def low_alerts(self) -> int:
-        with self._lock: return self._severity_counts["LOW"]
+        with self._lock:
+            return self._severity_counts["LOW"]
 
     @property
     def alert_rate(self) -> float:
@@ -263,22 +222,22 @@ class AlertManager:
             return self._total_alerts / max(self._total_flows, 1)
 
     def stats(self) -> dict:
-        """Snapshot of all counters — used by health check and Prometheus."""
+        """Snapshot of all counters for health check and Prometheus."""
         with self._lock:
             alert_rate = self._total_alerts / max(self._total_flows, 1)
             return {
-                "total_flows":      self._total_flows,
-                "total_alerts":     self._total_alerts,
+                "total_flows": self._total_flows,
+                "total_alerts": self._total_alerts,
                 "total_suppressed": self._total_suppressed,
-                "total_deduped":    self._total_deduped,
-                "alert_rate":       round(alert_rate, 4),
+                "total_deduped": self._total_deduped,
+                "alert_rate": round(alert_rate, 4),
                 "severity": {
                     "CRITICAL": self._severity_counts["CRITICAL"],
-                    "HIGH":     self._severity_counts["HIGH"],
-                    "MEDIUM":   self._severity_counts["MEDIUM"],
-                    "LOW":      self._severity_counts["LOW"],
+                    "HIGH": self._severity_counts["HIGH"],
+                    "MEDIUM": self._severity_counts["MEDIUM"],
+                    "LOW": self._severity_counts["LOW"],
                 },
-                "by_type":     self._storage.count_by_type(),
+                "by_type": self._storage.count_by_type(),
                 "by_severity": self._storage.count_by_severity(),
             }
 
@@ -286,15 +245,7 @@ class AlertManager:
         return self._storage.recent(limit)
 
     def purge_dedup_cache(self) -> int:
-        """
-        Remove expired dedup entries to prevent unbounded memory growth.
-        Call periodically (e.g., every 5 minutes from a background thread).
-
-        Returns
-        -------
-        int
-            Number of entries removed.
-        """
+        """Remove expired dedup entries to prevent unbounded memory growth."""
         now = time.time()
         with self._lock:
             expired = [
@@ -307,7 +258,6 @@ class AlertManager:
             logger.debug("Dedup cache purged: %d expired entries", len(expired))
         return len(expired)
 
-    # -----------------------------------------------------------------------
     @staticmethod
     def _load_dedup_window(config_path: str) -> float:
         default = 60.0
@@ -316,70 +266,16 @@ class AlertManager:
         try:
             with open(config_path, "r") as f:
                 cfg = json.load(f)
-            val = cfg.get("alert_dedup_window_s", default)
-            return max(1.0, float(val))
-        except Exception as exc:
-            logger.warning("Could not read alert_dedup_window_s: %s", exc)
-            return default
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in config file {config_path}: {exc}") from exc
+        except OSError as exc:
+            raise OSError(f"Could not read config file {config_path}: {exc}") from exc
 
-    def _send_telegram_notification(self, alert: Alert) -> None:
-        """Asynchronously send an alert notification via Telegram."""
-        if not self._telegram_config.get("enabled", False):
-            return
-
-        bot_token = self._telegram_config.get("bot_token")
-        chat_id = self._telegram_config.get("chat_id")
-        if not bot_token or not chat_id:
-            logger.warning("Telegram alerts are enabled but bot_token or chat_id is missing.")
-            return
-
-        # Check severity threshold
-        alert_severity = alert.severity.upper()
-        min_severity = self._telegram_config.get("min_severity", "HIGH").upper()
-        
-        _SEVERITY_WEIGHTS = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4, "NONE": 0}
-        if _SEVERITY_WEIGHTS.get(alert_severity, 0) < _SEVERITY_WEIGHTS.get(min_severity, 3):
-            return
-
-        def _send():
-            try:
-                message = (
-                    "🚨 *IDS ALERT*\n\n"
-                    f"*Attack Type:* {alert.attack_type}\n"
-                    f"*Source IP:* {alert.src_ip}\n"
-                    f"*Destination IP:* {alert.dst_ip}\n"
-                    f"*Confidence:* {alert.attack_confidence * 100:.0f}%\n"
-                    f"*Severity:* {alert.severity}"
-                )
-
-                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                data = urllib.parse.urlencode({
-                    "chat_id": chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown"
-                }).encode("utf-8")
-
-                req = urllib.request.Request(url, data=data, method="POST")
-                with urllib.request.urlopen(req, timeout=5.0) as response:
-                    res_data = json.loads(response.read().decode("utf-8"))
-                    if not res_data.get("ok"):
-                        logger.error("Telegram API response error: %s", res_data)
-            except Exception as e:
-                logger.error("Failed to send Telegram alert: %s", e)
-
-        # Dispatch in a background daemon thread
-        t = threading.Thread(target=_send, daemon=True, name="telegram-alert-sender")
-        t.start()
-
-    @staticmethod
-    def _load_telegram_config(config_path: str) -> dict:
-        default = {"enabled": False, "bot_token": "", "chat_id": "", "min_severity": "HIGH"}
-        if not os.path.exists(config_path):
-            return default
+        val = cfg.get("alert_dedup_window_s", default)
         try:
-            with open(config_path, "r") as f:
-                cfg = json.load(f)
-            return cfg.get("telegram", default)
-        except Exception as exc:
-            logger.warning("Could not read telegram config: %s", exc)
-            return default
+            val_float = float(val)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"alert_dedup_window_s must be a number in {config_path}: {exc}") from exc
+        return max(1.0, val_float)
+
+

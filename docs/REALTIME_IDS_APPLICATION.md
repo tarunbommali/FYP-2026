@@ -21,7 +21,7 @@
 6. [Running the IDS](#6-running-the-ids)
 7. [FastAPI REST & WebSocket Endpoints](#7-fastapi-rest--websocket-endpoints)
 8. [Runtime Configuration (`config.json`)](#8-runtime-configuration-configjson)
-9. [Telegram Notifications](#9-telegram-notifications)
+9. [Alertmanager Notifications](#9-alertmanager-notifications)
 10. [Prometheus Metrics](#10-prometheus-metrics)
 11. [Grafana Monitoring Stack](#11-grafana-monitoring-stack)
 12. [Docker Compose Deployment](#12-docker-compose-deployment)
@@ -37,10 +37,10 @@ The real-time IDS is a **continuously running application** that:
 1. Captures live network packets via **Scapy/Npcap**
 2. Assembles packets into **bidirectional flows** (5-tuple grouping with idle/absolute timeouts)
 3. Extracts **78 CICFlowMeter-compatible features** per completed flow
-4. Runs a **three-stage ML inference pipeline** (Binary XGBoost → Multiclass XGBoost → Isolation Forest)
+4. Runs a **two-tier stacking ensemble inference pipeline** (RF + XGBoost Binary + Isolation Forest → Meta-Learner → Multiclass XGBoost)
 5. Applies **configurable alert rules** and **deduplication** before persisting to SQLite
-6. Optionally sends **Telegram push notifications** for high-severity events
-7. Exposes **Prometheus metrics** scraped by Grafana for a live 25-panel dashboard
+6. Dispatches alerts via **Prometheus metrics** to **Prometheus Alertmanager** for email notifications
+7. Exposes **Prometheus metrics** scraped by Grafana for a live dashboard
 8. Serves a **FastAPI REST + WebSocket interface** for external integrations
 
 ---
@@ -84,7 +84,7 @@ The real-time IDS is a **continuously running application** that:
 |         +----------------------------------------+-----------------+     |
 |         |              Alert Manager                                |     |
 |         |  AlertRules --> Deduplication --> SQLite Persistence      |     |
-|         |              --> Telegram Notifications                   |     |
+|         |              --> Prometheus Metrics --> Alertmanager      |     |
 |         +----+---------------------+------------------------+-------+     |
 |              |                     |                        |             |
 |              v                     v                        v             |
@@ -137,7 +137,7 @@ Feature Extractor
                             v
                     Alert Manager
                     AlertRules --> Dedup (60s window) --> SQLite
-                    --> Telegram (if enabled, severity >= min_severity)
+                    --> Prometheus Metrics --> Alertmanager (Email)
                             |
                             v
                     Prometheus Counter/Histogram/Gauge update
@@ -167,7 +167,7 @@ IDS-Codebase/
 |   |   +-- schemas.py           PredictionResult dataclass + serialisation
 |   +-- alerts/
 |   |   +-- alert.py             Alert dataclass
-|   |   +-- alert_manager.py     Rules -> dedup -> SQLite -> Telegram -> Prometheus
+|   |   +-- alert_manager.py     Rules -> dedup -> SQLite -> Prometheus
 |   |   +-- alert_rules.py       Configurable rule engine
 |   |   +-- alert_storage.py     SQLite WAL-mode persistence, indexed queries
 |   |   +-- severity.py          Severity scorer (NONE/LOW/MEDIUM/HIGH/CRITICAL)
@@ -211,7 +211,7 @@ IDS-Codebase/
 | **Worker Pool** | `src/inference/worker_pool.py` | Multi-threaded inference queue (~2,700 flows/sec @ 4 workers) |
 | **Schemas** | `src/inference/schemas.py` | `PredictionResult` dataclass + serialisation |
 | **Severity Scoring** | `src/alerts/severity.py` | Maps (attack_prob, iso_score) to NONE/LOW/MEDIUM/HIGH/CRITICAL |
-| **Alert Manager** | `src/alerts/alert_manager.py` | Orchestrates: rules -> dedup -> SQLite -> Telegram -> Prometheus |
+| **Alert Manager** | `src/alerts/alert_manager.py` | Orchestrates: rules -> dedup -> SQLite -> Prometheus |
 | **Alert Rules** | `src/alerts/alert_rules.py` | Configurable rule engine (severity, confidence, port/type filtering) |
 | **Alert Storage** | `src/alerts/alert_storage.py` | SQLite WAL-mode persistence, indexed queries |
 | **Metrics Registry** | `src/monitoring/metrics_registry.py` | Prometheus Counter/Histogram/Gauge definitions |
@@ -353,13 +353,7 @@ All settings take effect on the **next IDS startup** — no code changes require
     "alert_min_confidence": 0.50,
     "alert_suppressed_types": [],
     "alert_suppressed_ports": [],
-    "alert_dedup_window_s": 60,
-    "telegram": {
-        "enabled": false,
-        "bot_token": "",
-        "chat_id": "",
-        "min_severity": "HIGH"
-    }
+    "alert_dedup_window_s": 60
 }
 ```
 
@@ -393,49 +387,31 @@ If ALL rules pass, the flow is stored as an Alert in SQLite.
 
 ---
 
-## 9. Telegram Notifications
+## 9. Alertmanager Notifications
 
-The IDS can push real-time Telegram messages for qualifying alerts using only Python's built-in `urllib` — no third-party library required.
+The IDS exposes alert counters and latency metrics via Prometheus. Prometheus evaluates declarative alert rules (`alert_rules.yml`) and forwards firing alerts to Prometheus Alertmanager, which dispatches HTML email notifications via Gmail SMTP.
 
 ### Setup
 
-1. Open Telegram and message **[@BotFather](https://t.me/BotFather)** — `/newbot` — copy the **bot token**.
-2. Message **[@userinfobot](https://t.me/userinfobot)** — copy your **chat ID**.
-3. Edit `config.json`:
+1. Generate a 16-character Google App Password in your Google Account security settings.
+2. Configure `alertmanager/alertmanager.yml`:
+   * Set `auth_username` to your Gmail address.
+   * Set `auth_password` to your App Password.
+   * Set `to: 'your-email@gmail.com'` under `email_configs`.
+3. Launch the Docker monitoring stack:
+   ```bash
+   docker compose up -d
+   ```
+4. Access Alertmanager web UI at `http://localhost:9093`.
 
-```json
-"telegram": {
-    "enabled": true,
-    "bot_token": "<your-bot-token>",
-    "chat_id": "<your-chat-id>",
-    "min_severity": "HIGH"
-}
-```
+### Alert Rule Integration
+Prometheus evaluates alert rules defined in `alert_rules.yml`:
+* `HighSeverityAttack`: Fires when high-severity attack alerts are detected.
+* `BruteForceDetected`: Fires on repeated SSH/FTP brute force patterns.
+* `UnknownAttackDetected`: Fires when zero-day anomalies exceed threshold.
 
-4. Restart the IDS.
+Decoupling alerting through Alertmanager ensures that notification delivery never blocks the real-time packet capture and inference pipeline.
 
-### Telegram Configuration
-
-| Key | Default | Description |
-|---|---|---|
-| `telegram.enabled` | `false` | Set `true` to activate push notifications. |
-| `telegram.bot_token` | `""` | Token from @BotFather. |
-| `telegram.chat_id` | `""` | Your personal or group chat ID. |
-| `telegram.min_severity` | `"HIGH"` | Only sends notifications for alerts at this severity or above. |
-
-### Message Format
-
-```
-ALERT
-
-Attack Type: DDoS
-Source IP: 192.168.1.45
-Destination IP: 10.0.0.1
-Confidence: 97%
-Severity: HIGH
-```
-
-> The `AlertManager` dispatches a **daemon thread** per qualifying alert — Telegram I/O never blocks the detection pipeline. Set `min_severity` to `"CRITICAL"` on high-traffic networks to avoid notification spam.
 
 ---
 
@@ -632,7 +608,7 @@ conn.close()
 | SQLite panel is empty | Alerts only appear after the first qualifying attack is detected |
 | Port 3000 already in use | Edit `docker-compose.yml`: change `"3000:3000"` to `"3001:3000"` |
 | Port 9091 already in use | Edit `docker-compose.yml`: change `"9091:9090"` to `"9092:9090"` |
-| Telegram notifications not arriving | Verify `enabled: true`, correct `bot_token` and `chat_id`; check `min_severity` |
+| Alertmanager emails not arriving | Verify SMTP credentials in `alertmanager.yml` and check `docker logs alertmanager` |
 
 ---
 

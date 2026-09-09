@@ -16,10 +16,6 @@ from typing import List
 import time
 
 
-# ---------------------------------------------------------------------------
-# Per-packet record (lightweight, only what the extractor needs)
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PacketRecord:
     timestamp:   float   # epoch seconds (time.time())
@@ -32,10 +28,6 @@ class PacketRecord:
     window_size: int     # TCP window size (0 if not TCP)
 
 
-# ---------------------------------------------------------------------------
-# Flow key (hashable, used as dict key in FlowManager)
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class FlowKey:
     src_ip:   str
@@ -44,10 +36,6 @@ class FlowKey:
     dst_port: int
     protocol: int   # 6=TCP, 17=UDP, 1=ICMP
 
-
-# ---------------------------------------------------------------------------
-# NetworkFlow — accumulates packets and tracks flow-level statistics
-# ---------------------------------------------------------------------------
 
 @dataclass
 class NetworkFlow:

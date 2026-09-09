@@ -192,7 +192,7 @@ We propose a **three-model ensemble pipeline** that addresses every weakness of 
 |         +----------------------------------------+------------------+       |
 |         |              Alert Manager                                 |       |
 |         |  AlertRules --> Deduplication --> SQLite Persistence       |       |
-|         |  (SQLite WAL-mode: alerts.db + optional Telegram Bot)      |       |
+|         |  (SQLite WAL-mode: alerts.db + Prometheus Alertmanager)    |       |
 |         +----+------------------------+---------------------------+--+       |
 |              |                        |                           |          |
 |              v                        v                           v          |
@@ -246,8 +246,8 @@ FeatureExtractor  -- computes 78 statistical features over the flow
                  AlertManager
                  Applies rules -> deduplicates (60 s window)
                  -> persists to SQLite (data/alerts/alerts.db)
-                 -> sends Telegram notification (if enabled)
                  -> pushes to WebSocket feed (/stream)
+                 -> exports to Prometheus metrics (:9090/metrics)
                          |
                          v
                  Prometheus Counter/Gauge/Histogram update (:9090/metrics)
@@ -767,13 +767,7 @@ Our system achieves **state-of-the-art accuracy on the hardest comparable proble
     "alert_min_confidence":   0.50,
     "alert_suppressed_types": [],
     "alert_suppressed_ports": [],
-    "alert_dedup_window_s":   60,
-    "telegram": {
-        "enabled": false,
-        "bot_token": "",
-        "chat_id": "",
-        "min_severity": "HIGH"
-    }
+    "alert_dedup_window_s":   60
 }
 ```
 
@@ -785,10 +779,6 @@ Our system achieves **state-of-the-art accuracy on the hardest comparable proble
 | `alert_suppressed_types` | [] | e.g. ["Bot"] — silence specific attack types globally |
 | `alert_suppressed_ports` | [] | e.g. [80, 443] — silence alerts on specific destination ports |
 | `alert_dedup_window_s` | 60 | Seconds before same (src_ip, dst_ip, attack_type) can re-alert |
-| `telegram.enabled` | false | Enables real-time Telegram Bot notifications for high-priority alerts |
-| `telegram.bot_token` | "" | Telegram Bot API token (from @BotFather) |
-| `telegram.chat_id` | "" | Target Telegram chat ID or channel ID |
-| `telegram.min_severity` | "HIGH" | Minimum alert severity to trigger a Telegram push notification |
 
 ---
 

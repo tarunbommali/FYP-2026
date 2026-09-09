@@ -200,10 +200,7 @@ memory_usage_percent = Gauge(
 )
 
 
-# ---------------------------------------------------------------------------
-# System Status Metrics
-# ---------------------------------------------------------------------------
-
+# System status
 system_status = Gauge(
     "ids_system_status",
     "IDS running status (1=running, 0=stopped)",
@@ -224,19 +221,13 @@ uptime_seconds = Gauge(
     "IDS uptime in seconds",
 )
 
-# ---------------------------------------------------------------------------
-# Pipeline Monitoring
-# ---------------------------------------------------------------------------
-
+# Pipeline monitoring
 features_extracted_total = Counter(
     "ids_features_extracted_total",
     "Total feature vectors extracted",
 )
 
-# ---------------------------------------------------------------------------
-# Multiclass Prediction
-# ---------------------------------------------------------------------------
-
+# Multiclass prediction
 last_attack_type = Gauge(
     "ids_last_attack_type_info",
     "Latest detected attack type",
@@ -248,10 +239,7 @@ attack_confidence = Gauge(
     "Confidence of latest multiclass attack prediction",
 )
 
-# ---------------------------------------------------------------------------
-# Model Status
-# ---------------------------------------------------------------------------
-
+# Model status
 binary_model_loaded = Gauge(
     "ids_binary_model_loaded",
     "Binary XGBoost model loaded",
@@ -277,10 +265,7 @@ meta_learner_loaded = Gauge(
     "Logistic Regression meta-learner model loaded",
 )
 
-# ---------------------------------------------------------------------------
-# Offline Model Evaluation Metrics (CICIDS2017 Test Set Verification)
-# ---------------------------------------------------------------------------
-
+# Offline model evaluation metrics (CICIDS2017 Test Set Verification)
 binary_xgb_f1 = Gauge(
     "ids_binary_xgb_f1",
     "Binary XGBoost model F1-Score on test set",
@@ -311,11 +296,7 @@ multiclass_xgb_macro_f1 = Gauge(
 )
 multiclass_xgb_macro_f1.set(0.8507)
 
-
-# ---------------------------------------------------------------------------
-# Operational Errors / Failure Monitoring
-# ---------------------------------------------------------------------------
-
+# Operational errors
 prediction_errors_total = Counter(
     "ids_prediction_errors_total",
     "Total prediction failures/errors in the inference engine",
@@ -330,3 +311,4 @@ unknown_attacks_total = Counter(
     "ids_unknown_attacks_total",
     "Total flows classified as UNKNOWN_ATTACK (high anomaly, low multiclass confidence)",
 )
+

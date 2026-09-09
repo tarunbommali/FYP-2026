@@ -94,9 +94,7 @@ class InferenceWorkerPool:
         self._total_errors:    int = 0
         self._lock = threading.Lock()
 
-    # -----------------------------------------------------------------------
     def start(self) -> None:
-        """Spawn all worker threads and begin processing."""
         if self._running:
             logger.warning("InferenceWorkerPool.start() called while already running.")
             return
@@ -117,25 +115,7 @@ class InferenceWorkerPool:
             self._n_workers, self._queue.maxsize,
         )
 
-    # -----------------------------------------------------------------------
     def submit(self, flow, block: bool = True, timeout: float = 1.0) -> bool:
-        """
-        Enqueue a completed flow for inference.
-
-        Parameters
-        ----------
-        flow    : NetworkFlow
-            Completed flow from FlowManager.
-        block   : bool
-            If True, block until there is space in the queue.
-        timeout : float
-            Maximum seconds to wait when block=True (default: 1.0).
-
-        Returns
-        -------
-        bool
-            True if the flow was enqueued, False if the queue was full.
-        """
         try:
             self._queue.put(flow, block=block, timeout=timeout)
             return True
@@ -144,22 +124,10 @@ class InferenceWorkerPool:
                            self._queue.qsize())
             return False
 
-    # -----------------------------------------------------------------------
     def shutdown(self, wait: bool = True, timeout_per_worker: float = 5.0) -> None:
-        """
-        Signal all workers to stop and optionally wait for them to finish.
-
-        Parameters
-        ----------
-        wait                : bool
-            If True, block until all workers have exited (default: True).
-        timeout_per_worker  : float
-            Maximum seconds to wait per worker thread (default: 5.0).
-        """
         logger.info("InferenceWorkerPool shutting down...")
         self._running = False
 
-        # Drain remaining items and push stop sentinels
         for _ in range(self._n_workers):
             try:
                 self._queue.put(_STOP, block=False)
@@ -175,10 +143,8 @@ class InferenceWorkerPool:
             self._total_processed, self._total_errors,
         )
 
-    # -----------------------------------------------------------------------
     @property
     def queue_size(self) -> int:
-        """Number of flows currently waiting in the queue."""
         return self._queue.qsize()
 
     @property
@@ -191,7 +157,6 @@ class InferenceWorkerPool:
         with self._lock:
             return self._total_errors
 
-    # -----------------------------------------------------------------------
     def _worker_loop(self, worker_id: int) -> None:
         """Main loop for each worker thread."""
         logger.debug("Worker-%d started", worker_id)

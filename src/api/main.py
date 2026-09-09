@@ -31,7 +31,6 @@ import logging
 import os
 import sys
 import time
-from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,9 +41,8 @@ if SRC_DIR not in sys.path:
 # FastAPI imports (lazy-checked at import time)
 try:
     from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
-    from fastapi.responses import JSONResponse
     from fastapi.middleware.cors import CORSMiddleware
-    import uvicorn  # pyrefly: ignore [missing-import]
+    import uvicorn
 except ImportError as e:
     raise ImportError(
         "FastAPI/uvicorn not installed. Run: pip install fastapi uvicorn"
@@ -52,34 +50,13 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Module-level state (populated by build_app())
-# ---------------------------------------------------------------------------
-_alert_mgr   = None
-_start_time  = time.time()
+_alert_mgr = None
+_start_time = time.time()
 _ws_clients: List[WebSocket] = []
-_ws_lock     = asyncio.Lock()
+_ws_lock = asyncio.Lock()
 
-
-# ---------------------------------------------------------------------------
-# Factory function
-# ---------------------------------------------------------------------------
 
 def build_app(alert_mgr=None) -> FastAPI:
-    """
-    Build and configure the FastAPI application.
-
-    Parameters
-    ----------
-    alert_mgr : AlertManager | None
-        Live AlertManager instance. If None, stats/alerts endpoints return empty data.
-        Pass None when running standalone without the capture pipeline.
-
-    Returns
-    -------
-    FastAPI
-        Configured app instance.
-    """
     global _alert_mgr
     _alert_mgr = alert_mgr
 
@@ -91,7 +68,6 @@ def build_app(alert_mgr=None) -> FastAPI:
         redoc_url   = "/redoc",
     )
 
-    # Allow all origins for development (restrict in production)
     app.add_middleware(
         CORSMiddleware,
         allow_origins     = ["*"],
@@ -100,17 +76,13 @@ def build_app(alert_mgr=None) -> FastAPI:
         allow_headers     = ["*"],
     )
 
-    # Register routes
     app.include_router(_router)
-
     return app
 
 
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
-from fastapi import APIRouter  # noqa: E402 (after FastAPI import check)
+from fastapi import APIRouter
 _router = APIRouter()
+
 
 
 # ── GET /health ─────────────────────────────────────────────────────────────
@@ -236,11 +208,10 @@ async def stream(websocket: WebSocket) -> None:
 
     try:
         while True:
-            # Keep connection alive with periodic heartbeats
             await asyncio.sleep(30)
             try:
                 await websocket.send_text(json.dumps({"type": "ping"}))
-            except Exception:
+            except (WebSocketDisconnect, RuntimeError):
                 break
     except WebSocketDisconnect:
         pass
@@ -252,7 +223,6 @@ async def stream(websocket: WebSocket) -> None:
 
 
 async def _broadcast(message: dict) -> None:
-    """Broadcast a message to all connected WebSocket clients."""
     if not _ws_clients:
         return
     payload = json.dumps(message)
@@ -260,7 +230,7 @@ async def _broadcast(message: dict) -> None:
     for ws in list(_ws_clients):
         try:
             await ws.send_text(payload)
-        except Exception:
+        except (WebSocketDisconnect, RuntimeError):
             dead.append(ws)
     if dead:
         async with _ws_lock:
@@ -269,47 +239,19 @@ async def _broadcast(message: dict) -> None:
                     _ws_clients.remove(ws)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _models_loaded() -> bool:
-    """Return True if the MODELS singleton has been successfully initialised."""
     try:
         from inference.model_loader import MODELS
         return MODELS is not None
-    except Exception:
+    except (ImportError, FileNotFoundError, AttributeError):
         return False
 
 
+
 def _alert_to_dict(alert) -> dict:
-    """Convert an Alert dataclass to a JSON-serialisable dict."""
-    try:
-        return asdict(alert)
-    except Exception:
-        # Fallback for non-dataclass Alert objects
-        return {
-            "id":                 getattr(alert, "id", None),
-            "timestamp":          getattr(alert, "timestamp", None),
-            "src_ip":             getattr(alert, "src_ip", None),
-            "dst_ip":             getattr(alert, "dst_ip", None),
-            "src_port":           getattr(alert, "src_port", None),
-            "dst_port":           getattr(alert, "dst_port", None),
-            "protocol":           getattr(alert, "protocol", None),
-            "attack_type":        getattr(alert, "attack_type", None),
-            "attack_probability": getattr(alert, "attack_probability", None),
-            "attack_confidence":  getattr(alert, "attack_confidence", None),
-            "iso_score":          getattr(alert, "iso_score", None),
-            "severity":           getattr(alert, "severity", None),
-            "latency_ms":         getattr(alert, "latency_ms", None),
-        }
+    return alert.to_dict() if hasattr(alert, "to_dict") else dict(alert.__dict__)
 
 
-# ---------------------------------------------------------------------------
-# Standalone entry point
-# ---------------------------------------------------------------------------
-
-# Expose app at module level for uvicorn (uvicorn api.main:app)
 app = build_app(alert_mgr=None)
 
 if __name__ == "__main__":

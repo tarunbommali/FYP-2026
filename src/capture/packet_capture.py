@@ -35,7 +35,6 @@ from typing import Callable, Optional
 
 from flows.flow import FlowKey, PacketRecord
 from flows.flow_manager import FlowManager
-from monitoring import metrics_registry as reg
 
 logger = logging.getLogger(__name__)
 
@@ -148,17 +147,7 @@ class PacketCapture:
             f"Please run 'venv\\Scripts\\python.exe src\\main.py --list-interfaces' to list valid adapters."
         )
 
-    # -----------------------------------------------------------------------
     def start(self, packet_count: int = 0) -> None:
-        """
-        Start packet capture (blocking).
-
-        Parameters
-        ----------
-        packet_count : int
-            Number of packets to capture (0 = unlimited).
-        """
-        # Import Scapy here to allow the module to load even if Scapy is absent
         try:
             # pyrefly: ignore [missing-import]
             from scapy.all import sniff
@@ -184,7 +173,7 @@ class PacketCapture:
                 filter  = self._filter,
                 prn     = self._handle_packet,
                 count   = packet_count,
-                store   = False,        # do not buffer packets in RAM
+                store   = False,
                 stop_filter = lambda _: not self._running,
             )
         finally:
@@ -194,16 +183,13 @@ class PacketCapture:
             logger.info("Capture stopped.")
 
     def stop(self) -> None:
-        """Signal the capture loop to stop after the next packet."""
         self._running = False
 
     @property
     def active_flows(self) -> int:
         return self._flow_manager.active_flow_count
 
-    # -----------------------------------------------------------------------
     def _handle_packet(self, raw_pkt) -> None:
-        """Scapy callback — called for every captured packet."""
         try:
             pkt_record, flow_key = _parse_packet(raw_pkt)
             if pkt_record is not None and flow_key is not None:
@@ -231,10 +217,6 @@ class PacketCapture:
         )
         self._flush_thread.start()
 
-
-# ---------------------------------------------------------------------------
-# Packet parser — converts a Scapy packet into (PacketRecord, FlowKey)
-# ---------------------------------------------------------------------------
 
 def _parse_packet(raw_pkt) -> "tuple[Optional[PacketRecord], Optional[FlowKey]]":
     """
