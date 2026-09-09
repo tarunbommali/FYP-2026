@@ -98,6 +98,22 @@ class TestAlertConfiguration(unittest.TestCase):
         self.assertIn("depends_on", prom)
         self.assertIn("alertmanager", prom["depends_on"])
 
+    def test_docker_compose_test_and_live_variants(self):
+        for variant in ["docker-compose.test.yml", "docker-compose.live.yml"]:
+            compose_path = os.path.join(BASE_DIR, variant)
+            self.assertTrue(os.path.exists(compose_path), f"{variant} must exist")
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f)
+            services = compose.get("services", {})
+            self.assertIn("alertmanager", services, f"alertmanager missing in {variant}")
+            self.assertIn("prometheus", services, f"prometheus missing in {variant}")
+            self.assertIn("grafana", services, f"grafana missing in {variant}")
+
+        test_dash_path = os.path.join(BASE_DIR, "grafana", "dashboards", "ids_test_dashboard.json")
+        live_dash_path = os.path.join(BASE_DIR, "grafana", "dashboards", "ids_live_dashboard.json")
+        self.assertTrue(os.path.exists(test_dash_path), "ids_test_dashboard.json must exist")
+        self.assertTrue(os.path.exists(live_dash_path), "ids_live_dashboard.json must exist")
+
     def test_telegram_removed_from_config_and_code(self):
         import json
         config_path = os.path.join(BASE_DIR, "config.json")

@@ -4,7 +4,7 @@
   },
   "editable": true,
   "graphTooltip": 0,
-  "title": "AI-Driven Real-Time Intrusion Detection System",
+  "title": "IDS - Test Dataset Benchmark (20% Split Replay)",
   "schemaVersion": 39,
   "version": 2,
   "refresh": "5s",
@@ -452,10 +452,10 @@
         "x": 0,
         "y": 15
       },
-      "description": "Static panel — not a live query. These are held-out test-set results from training, not measured from live traffic. Edit the markdown below to match your reported numbers.",
+      "description": "Static panel \u00e2\u20ac\u201d not a live query. These are held-out test-set results from training, not measured from live traffic. Edit the markdown below to match your reported numbers.",
       "options": {
         "mode": "markdown",
-        "content": "**Binary XGBoost**\nF1: 0.9974 · ROC-AUC: 0.99997\n\n**Multiclass XGBoost**\nAccuracy: 99.84% · Weighted F1: 0.9985 · Macro F1: 0.8507"
+        "content": "**Binary XGBoost**\nF1: 0.9974 \u00c2\u00b7 ROC-AUC: 0.99997\n\n**Multiclass XGBoost**\nAccuracy: 99.84% \u00c2\u00b7 Weighted F1: 0.9985 \u00c2\u00b7 Macro F1: 0.8507"
       }
     },
     {
@@ -644,7 +644,7 @@
       },
       "targets": [
         {
-          "expr": "ids_attack_type_total",
+          "expr": "ids_attacks_by_type",
           "refId": "A",
           "legendFormat": "{{type}}"
         }
@@ -666,7 +666,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, ids_attack_type_total)",
+          "expr": "topk(10, ids_attacks_by_type)",
           "refId": "A",
           "legendFormat": "{{type}}"
         }
@@ -696,7 +696,7 @@
         "x": 16,
         "y": 39
       },
-      "description": "Displays the currently detected attack category (or BENIGN if no attack has occurred). Driven by the custom Prometheus gauge ids_last_attack_type_info.",
+      "description": "Displays the currently detected attack category. Driven by the custom Prometheus gauge ids_last_attack_type_info.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -792,7 +792,7 @@
         "x": 0,
         "y": 56
       },
-      "description": "Approximation: sums the P95 of feature-extraction and inference latency independently. This is NOT a true end-to-end P95 (percentiles aren't additive across independent stages) — it's an upper-bound estimate. For an exact figure, instrument a single histogram spanning capture-to-alert and query that directly.",
+      "description": "Approximation: sums the P95 of feature-extraction and inference latency independently. This is NOT a true end-to-end P95 (percentiles aren't additive across independent stages) \u00e2\u20ac\u201d it's an upper-bound estimate. For an exact figure, instrument a single histogram spanning capture-to-alert and query that directly.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1070,5 +1070,6 @@
         ]
       }
     }
-  ]
+  ],
+  "uid": "ids-test-dashboard"
 }

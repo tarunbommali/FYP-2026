@@ -91,11 +91,11 @@ class AlertManager:
 
         logger.info("AlertManager ready | db=%s | dedup_window=%.0fs", db_path, self._dedup_window)
 
-    def process(self, prediction: dict, flow: NetworkFlow) -> Optional[Alert]:
+    def process(self, prediction: dict, flow: Optional[NetworkFlow] = None) -> Optional[Alert]:
         with self._lock:
             self._total_flows += 1
 
-        dst_port = flow.key.dst_port
+        dst_port = flow.key.dst_port if flow is not None else int(prediction.get("Destination Port", 80) or 80)
         should_alert, reason = self._rules.should_alert(prediction, dst_port=dst_port)
         if not should_alert:
             with self._lock:
@@ -103,9 +103,14 @@ class AlertManager:
             logger.debug("Alert suppressed | reason=%s", reason)
             return None
 
+        src_ip = flow.key.src_ip if flow is not None else "192.168.1.100"
+        dst_ip = flow.key.dst_ip if flow is not None else "192.168.1.1"
+        src_port = flow.key.src_port if flow is not None else 0
+        protocol = flow.key.protocol if flow is not None else 6
+
         dedup_key: _DedupKey = (
-            flow.key.src_ip,
-            flow.key.dst_ip,
+            src_ip,
+            dst_ip,
             prediction.get("attack_type", "Unknown"),
         )
         now = time.time()
@@ -135,11 +140,11 @@ class AlertManager:
 
         alert = Alert(
             timestamp          = Alert.now_utc(),
-            src_ip             = flow.key.src_ip,
-            dst_ip             = flow.key.dst_ip,
-            src_port           = flow.key.src_port,
-            dst_port           = flow.key.dst_port,
-            protocol           = flow.key.protocol,
+            src_ip             = src_ip,
+            dst_ip             = dst_ip,
+            src_port           = src_port,
+            dst_port           = dst_port,
+            protocol           = protocol,
             attack_type        = prediction.get("attack_type", "Unknown"),
             attack_probability = prediction.get("attack_probability", 0.0),
             rf_probability     = prediction.get("rf_probability", 0.0),

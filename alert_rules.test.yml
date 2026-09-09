@@ -1,0 +1,56 @@
+# ==============================================================================
+# Prometheus Alerting Rules for Test Data Mode (Rapid Evaluation)
+# ==============================================================================
+
+groups:
+  - name: ids_test_pipeline_alerts
+    rules:
+      - alert: IDSServiceDown
+        expr: up{job="ids_pipeline"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          component: pipeline
+        annotations:
+          summary: "IDS Test Pipeline is offline"
+          description: "Prometheus cannot scrape metrics from host.docker.internal:9090."
+
+      - alert: CriticalAttackDetected
+        expr: increase(ids_alerts_severity_total{severity="CRITICAL"}[1m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          component: inference
+        annotations:
+          summary: "Critical Intrusion Attack Detected in Test Dataset"
+          description: "One or more CRITICAL severity intrusion attacks were detected in the test flow batch."
+
+      - alert: HighAttackRateDetected
+        expr: ids_attack_rate > 0.15
+        for: 0s
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High Attack Rate in Test Data (> 15%)"
+          description: "Attack rate has exceeded 15% in test flow replay."
+
+      - alert: AnomalyDetectionSpike
+        expr: increase(ids_anomalies_total[1m]) > 10
+        for: 0s
+        labels:
+          severity: warning
+          component: anomaly_detection
+        annotations:
+          summary: "Test Flow Anomaly Detected"
+          description: "Isolation Forest flagged anomalous test flows."
+
+      - alert: HighInferenceLatency
+        expr: ids_inference_latency_ms_sum / ids_inference_latency_ms_count > 50
+        for: 30s
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High Test Inference Latency (> 50ms)"
+          description: "Average inference latency per flow is running high at {{ $value | printf \"%.2f\" }}ms."

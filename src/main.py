@@ -1,43 +1,30 @@
 """
 main.py
-IDS Runtime Orchestrator — the single entry point for the live IDS.
+IDS Runtime Orchestrator — supporting Offline Test Data replay and Live Npcap capture.
 
-Wires together:
-    PacketCapture  →  FlowManager  →  FeatureExtractor
-        →  Predictor  →  AlertManager  →  Prometheus Metrics  →  Grafana
+Usage:
+    # Default: Run offline 20% CICIDS2017 test dataset
+    venv\\Scripts\\python.exe src\\main.py
 
-Usage
------
-    # Default interface (Ethernet) with API server:
-    venv\\Scripts\\python.exe main.py
+    # Optional worker count:
+    venv\\Scripts\\python.exe src\\main.py --workers 4
 
-    # Specify interface:
-    venv\\Scripts\\python.exe main.py --interface "Wi-Fi"
+    # Live Mode: Run live Npcap packet capture
+    venv\\Scripts\\python.exe src\\main.py --live --interface "Ethernet" --workers 4
 
-    # Custom API port:
-    venv\\Scripts\\python.exe main.py --interface "Ethernet" --api-port 8080
-
-    # Verbose logging:
-    venv\\Scripts\\python.exe main.py --log-level DEBUG
-
-    # List available network interfaces:
-    venv\\Scripts\\python.exe main.py --list-interfaces
-
-Shutdown
---------
-    Press Ctrl+C — the system will flush all in-progress flows and exit cleanly.
+    # List network interfaces:
+    venv\\Scripts\\python.exe src\\main.py --list-interfaces
 """
 
 import argparse
 import logging
 import logging.handlers
 import os
+import queue
 import signal
-import socket
 import sys
 import threading
 import time
-import urllib.request
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
@@ -51,6 +38,11 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+
 def _configure_logging(level: str) -> None:
     log_dir = os.path.join(BASE_DIR, "data", "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -61,15 +53,9 @@ def _configure_logging(level: str) -> None:
     )
 
     root = logging.getLogger()
-    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root.setLevel(logging.DEBUG)
 
-    import io
-    utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace") \
-        if hasattr(sys.stdout, "buffer") else sys.stdout
-    ch = logging.StreamHandler(utf8_stdout)
-    ch.setFormatter(fmt)
-    root.addHandler(ch)
-
+    # File handler records all system logs (INFO, WARNING, ERROR, DEBUG)
     fh = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, "ids.log"),
         maxBytes=10 * 1024 * 1024,
@@ -77,39 +63,49 @@ def _configure_logging(level: str) -> None:
         encoding="utf-8",
     )
     fh.setFormatter(fmt)
+    fh.setLevel(logging.INFO)
     root.addHandler(fh)
+
+    # Console handler: only show ERRORs (or DEBUG if explicitly requested) to keep the terminal status ticker clean
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    if level.upper() == "DEBUG":
+        ch.setLevel(logging.DEBUG)
+    else:
+        ch.setLevel(logging.ERROR)
+    root.addHandler(ch)
 
 
 logger = logging.getLogger(__name__)
 
 
-def _import_components():
-    from capture.packet_capture import PacketCapture
-    from features.feature_extractor import extract_features
-    from inference.predictor import predict_flow
-    from alerts.alert_manager import AlertManager
-    from monitoring.metrics_server import start_metrics_server
-    from monitoring.metrics_exporter import start_metrics_export_thread
-    from monitoring import metrics_registry as reg
-    from flows.flow_manager import FlowManager
-
-    return (
-        PacketCapture, extract_features, predict_flow,
-        AlertManager, start_metrics_server, start_metrics_export_thread,
-        reg, FlowManager,
-    )
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="ids-main",
-        description="IDS Runtime Orchestrator — captures live traffic and detects intrusions.",
+        description="AI-Driven Real-Time Intrusion Detection System",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Run in LIVE mode with Npcap packet capture (default: offline 20%% test dataset).",
     )
     parser.add_argument(
         "--interface", "-i",
         default="Ethernet",
-        help="Network interface name to capture on (default: 'Ethernet'). "
-             "Use --list-interfaces to see available adapters.",
+        help="Network interface name for live capture (default: 'Ethernet').",
+    )
+    parser.add_argument(
+        "--workers", "-w",
+        type=int,
+        default=4,
+        help="Number of inference workers (default: 4).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of flows to process in TEST DATA mode (default: all).",
     )
     parser.add_argument(
         "--log-level", "-l",
@@ -121,19 +117,19 @@ def _parse_args() -> argparse.Namespace:
         "--metrics-port", "-m",
         type=int,
         default=9090,
-        help="Prometheus HTTP metrics endpoint port (default: 9090).",
+        help="Prometheus metrics endpoint port (default: 9090).",
     )
     parser.add_argument(
         "--api",
         action="store_true",
         default=True,
-        help="Start the FastAPI REST/WebSocket server alongside the capture loop (enabled by default).",
+        help="Start the FastAPI REST/WebSocket server (default: True).",
     )
     parser.add_argument(
         "--api-port",
         type=int,
         default=8000,
-        help="FastAPI server port (default: 8000). Only used when --api is set.",
+        help="FastAPI server port (default: 8000).",
     )
     parser.add_argument(
         "--list-interfaces",
@@ -144,30 +140,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--filter",
         default="ip",
-        help="BPF filter string for packet capture (default: 'ip').",
-    )
-    parser.add_argument(
-        "--workers", "-w",
-        type=int,
-        default=1,
-        help="Number of parallel inference workers (default: 1). "
-             "Set to 4 for ~2700 flows/sec throughput.",
+        help="BPF filter string for live capture (default: 'ip').",
     )
     parser.add_argument(
         "--idle-timeout",
         type=float,
         default=15.0,
-        dest="idle_timeout",
-        help="Seconds of flow inactivity before export (default: 15 for dev; "
-             "use 120 for production).",
+        help="Seconds of flow inactivity before export in live mode (default: 15.0).",
     )
     parser.add_argument(
         "--absolute-timeout",
         type=float,
         default=60.0,
-        dest="absolute_timeout",
-        help="Maximum flow lifetime in seconds (default: 60 for dev; "
-             "use 600 for production).",
+        help="Maximum flow lifetime in seconds in live mode (default: 60.0).",
     )
     return parser.parse_args()
 
@@ -188,10 +173,16 @@ def _list_interfaces() -> None:
 
 def _start_api_server(port: int, alert_mgr) -> None:
     try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                logger.warning("Port %d is already in use — FastAPI server skipped", port)
+                return
+
         import uvicorn
         from api.main import build_app
         app = build_app(alert_mgr)
-        logger.info("Starting FastAPI server on http://0.0.0.0:%d", port)
+        logger.info("Starting FastAPI server on port %d", port)
         config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
         server = uvicorn.Server(config)
         t = threading.Thread(target=server.run, daemon=True, name="api-server")
@@ -202,151 +193,319 @@ def _start_api_server(port: int, alert_mgr) -> None:
         logger.error("Failed to start API server: %s", exc)
 
 
-def _http_ok(url: str, timeout: float = 2.0) -> bool:
-    try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status < 400
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return False
+def _handle_prediction(result: dict, alert_mgr, reg, flow=None) -> None:
+    attack_type = result.get("attack_type", "BENIGN")
+    attack_confidence = float(result.get("attack_confidence", 0.0) or 0.0)
+    iso_score = float(result.get("iso_score", 0.0) or 0.0)
+    is_attack = bool(result.get("is_attack", False))
 
+    reg.flows_completed_total.inc()
+    reg.flows_total.inc()
+    reg.predictions_total.inc()
+    reg.inference_latency_ms.observe(result.get("latency_ms", 0))
 
+    reg.xgb_probability.set(float(result.get("xgb_probability", 0.0) or 0.0))
+    reg.rf_probability.set(float(result.get("rf_probability", 0.0) or 0.0))
+    reg.model_confidence.set(attack_confidence)
+    reg.iso_score.set(iso_score)
+    reg.meta_probability.set(float(result.get("meta_probability", 0.0) or 0.0))
 
-def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def _tick(ok: bool) -> str:
-    return "✅ Running   " if ok else "❌ Not Running"
-
-
-def _tick_conn(ok: bool) -> str:
-    return "✅ Connected " if ok else "❌ Unreachable"
-
-
-def _print_health_dashboard(args, models_ok: bool, alert_mgr_ok: bool,
-                             worker_pool_ok: bool, capture_ok: bool) -> None:
-
-    """Print the full startup health dashboard to stdout."""
-    W = 62  # box width
-
-    # -- external service checks (non-blocking, 2-second timeout each) -------
-    api_ok        = _port_open("127.0.0.1", args.api_port) if args.api else None
-    prom_exp_ok   = _port_open("127.0.0.1", args.metrics_port)
-    prom_srv_ok   = _http_ok(f"http://localhost:9091/-/healthy")
-    grafana_ok    = _http_ok("http://localhost:3001/api/health") or \
-                    _http_ok("http://localhost:3000/api/health")
-    grafana_port  = 3001 if _http_ok("http://localhost:3001/api/health") else 3000
-    sqlite_ok     = alert_mgr_ok   # alert manager initialised → SQLite is open
-
-    sep   = "─" * W
-    thick = "═" * W
-
-    lines = [
-        "",
-        thick,
-        " AI-Driven Real-Time Intrusion Detection System".center(W),
-        " MCA Final Year Project  |  CICIDS2017  |  Stacking Ensemble".center(W),
-        thick,
-        "",
-        f"  {'IDS Status':<22} : {'✅ LIVE' if capture_ok else '⚠  Starting...'}",
-        f"  {'Interface':<22} : {args.interface}",
-        f"  {'Inference Workers':<22} : {args.workers}",
-        f"  {'Models':<22} : {'✅ Loaded (78 Features)' if models_ok else '❌ Load Failed'}",
-        "",
-        sep,
-        "  Subsystems",
-        sep,
-        f"  {'Packet Capture':<22} : {'✅ Active' if capture_ok else '⚠  Starting...'}",
-        f"  {'Flow Manager':<22} : ✅ Active",
-        f"  {'Feature Extractor':<22} : ✅ Active  (78 CICFlowMeter features)",
-        f"  {'Random Forest':<22} : {'✅ Loaded' if models_ok else '❌ Failed'}",
-        f"  {'XGBoost Binary':<22} : {'✅ Loaded' if models_ok else '❌ Failed'}",
-        f"  {'Isolation Forest':<22} : {'✅ Loaded' if models_ok else '❌ Failed'}",
-        f"  {'Meta-Learner (LR)':<22} : {'✅ Loaded' if models_ok else '❌ Failed'}",
-        f"  {'XGBoost Multiclass':<22} : {'✅ Loaded' if models_ok else '❌ Failed'}",
-        f"  {'Alert Manager':<22} : {'✅ Active' if alert_mgr_ok else '❌ Failed'}",
-        f"  {'Inference Worker Pool':<22} : {'✅ Active (%d workers)' % args.workers if worker_pool_ok else ('─ Single-thread mode' if not worker_pool_ok and args.workers == 1 else '❌ Failed')}",
-        "",
-        sep,
-        "  Services",
-        sep,
-    ]
-
-    # FastAPI
-    if args.api:
-        lines += [
-            f"  {'FastAPI':<22} : {_tick(api_ok)}",
-            f"  {'  API':<22} : http://localhost:{args.api_port}",
-            f"  {'  Swagger UI':<22} : http://localhost:{args.api_port}/docs",
-            f"  {'  WebSocket':<22} : ws://localhost:{args.api_port}/stream",
-        ]
+    if is_attack:
+        reg.attacks_detected_total.inc()
+        reg.attack_total.inc()
+        reg.attacks_by_type.labels(type=attack_type).inc()
+        reg.attack_type_total.labels(type=attack_type).inc()
+        if attack_confidence >= 0.85:
+            reg.high_confidence_attacks.inc()
     else:
-        lines.append(f"  {'FastAPI':<22} : ─ Disabled  (use --api to enable)")
+        reg.benign_detected_total.inc()
+        reg.benign_total.inc()
 
-    lines += [
-        "",
-        f"  {'Prometheus Exporter':<22} : {_tick(prom_exp_ok)}",
-        f"  {'  Metrics Endpoint':<22} : http://localhost:{args.metrics_port}/metrics",
-        "",
-        f"  {'Prometheus Server':<22} : {_tick_conn(prom_srv_ok)}",
-        f"  {'  URL':<22} : http://localhost:9091",
-        f"  {'  Targets':<22} : http://localhost:9091/targets",
-        "",
-        f"  {'Grafana':<22} : {_tick_conn(grafana_ok)}",
-        f"  {'  Dashboard':<22} : http://localhost:{grafana_port}",
-        f"  {'  Login':<22} : admin / admin",
-        "",
-        f"  {'SQLite Alerts DB':<22} : {_tick_conn(sqlite_ok)}",
-        "",
-        sep,
-        "  Live Counters  (updated every 10 s — watch below)",
-        sep,
-        "",
-        f"  System Ready ✔   —   Press Ctrl+C to stop.",
-        "",
-        thick,
-        "",
-    ]
+    if iso_score > 0:
+        reg.anomalies_total.inc()
 
-    print("\n".join(lines), flush=True)
+    alert_mgr.process(result, flow=flow)
 
 
-def _start_status_ticker(reg, alert_mgr, shutdown_event: threading.Event,
-                          interval: float = 10.0) -> None:
-    try:
-        import psutil
-        _psutil = True
-    except ImportError:
-        _psutil = False
+def _run_test_mode(args, alert_mgr, reg, shutdown_event: threading.Event) -> None:
+    X_test_path = os.path.join(BASE_DIR, "data", "processed", "X_test_binary.parquet")
+    if not os.path.exists(X_test_path):
+        print("\n Status     : ERROR")
+        print(f" Reason     : Test dataset not found at {X_test_path}. Run Phase 2 (02_binary_training.py) first.\n")
+        sys.exit(1)
 
-    def _ticker():
-        while not shutdown_event.wait(timeout=interval):
+    import pandas as pd
+    from inference.predictor import predict_flow
+
+    df = pd.read_parquet(X_test_path)
+    if args.limit and args.limit > 0:
+        df = df.iloc[:args.limit]
+    total_flows = len(df)
+    cols = list(df.columns)
+
+    header = (
+        "============================================================\n"
+        " AI-Driven Real-Time Intrusion Detection System\n"
+        "============================================================\n\n"
+        " Mode       : TEST DATA\n"
+        " Dataset    : CICIDS2017 20% Test\n"
+        f" Workers    : {args.workers}\n"
+        " Features   : 78\n\n"
+        " Models     : RF + XGBoost + Isolation Forest + Meta Learner\n"
+        " Monitoring : Prometheus + Grafana\n"
+        " Alerting   : Alertmanager -> Email\n\n"
+        "------------------------------------------------------------\n"
+        " Test Progress\n"
+        "------------------------------------------------------------"
+    )
+    print(header, flush=True)
+
+    num_workers = max(1, args.workers)
+    work_queue: queue.Queue = queue.Queue(maxsize=num_workers * 128)
+    _SENTINEL = object()
+
+    processed_count = 0
+    attack_count = 0
+    benign_count = 0
+    count_lock = threading.Lock()
+
+    def _worker():
+        nonlocal processed_count, attack_count, benign_count
+        while not shutdown_event.is_set():
             try:
-                packets = int(reg.packets_processed_total._value.get())
-                flows   = int(reg.flows_completed_total._value.get())
-                preds   = int(reg.predictions_total._value.get())
+                item = work_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            if item is _SENTINEL:
+                work_queue.task_done()
+                break
+
+            try:
+                result = predict_flow(item)
+                _handle_prediction(result, alert_mgr, reg, flow=None)
+                with count_lock:
+                    processed_count += 1
+                    if result.get("is_attack", False):
+                        attack_count += 1
+                    else:
+                        benign_count += 1
+            except Exception as exc:
+                logger.error("Error predicting flow: %s", exc)
+            finally:
+                work_queue.task_done()
+
+    threads = []
+    for i in range(num_workers):
+        t = threading.Thread(target=_worker, daemon=True, name=f"test-worker-{i}")
+        t.start()
+        threads.append(t)
+
+    status_running = True
+
+    def _status_ticker():
+        while not shutdown_event.is_set() and status_running:
+            alerts = alert_mgr.stats().get("total_alerts", 0)
+            with count_lock:
+                p = processed_count
+                att = attack_count
+                ben = benign_count
+            print(
+                f"\r Flows: {p:>7,} / {total_flows:>7,} | "
+                f"Pred: {p:>7,} | Attacks: {att:>5,} | "
+                f"Benign: {ben:>7,} | Alerts: {alerts:>4,} | "
+                f"Status: Running  ",
+                end="", flush=True,
+            )
+            time.sleep(2.0)
+
+    ticker = threading.Thread(target=_status_ticker, daemon=True, name="status-ticker")
+    ticker.start()
+
+    try:
+        for row in df.itertuples(index=False):
+            if shutdown_event.is_set():
+                break
+            feat_dict = dict(zip(cols, row))
+            while not shutdown_event.is_set():
+                try:
+                    work_queue.put(feat_dict, timeout=0.2)
+                    break
+                except queue.Full:
+                    pass
+
+        while not shutdown_event.is_set():
+            if work_queue.empty():
+                break
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        shutdown_event.set()
+    finally:
+        status_running = False
+        for _ in range(num_workers):
+            work_queue.put(_SENTINEL)
+        for t in threads:
+            t.join(timeout=1.0)
+
+        alerts = alert_mgr.stats().get("total_alerts", 0)
+        with count_lock:
+            p = processed_count
+            att = attack_count
+            ben = benign_count
+        final_status = "Stopped" if shutdown_event.is_set() else "Completed"
+        print(
+            f"\r Flows: {p:>7,} / {total_flows:>7,} | "
+            f"Pred: {p:>7,} | Attacks: {att:>5,} | "
+            f"Benign: {ben:>7,} | Alerts: {alerts:>4,} | "
+            f"Status: {final_status} ",
+            flush=True,
+        )
+        print(f"\n\nTest processing {final_status.lower()}. Metrics and alert services active. Press Ctrl+C to exit.")
+        while not shutdown_event.is_set():
+            time.sleep(0.5)
+
+
+def _run_live_mode(args, alert_mgr, reg, shutdown_event: threading.Event) -> None:
+    from capture.packet_capture import PacketCapture
+    from features.feature_extractor import extract_features
+    from inference.predictor import predict_flow
+
+    header = (
+        "============================================================\n"
+        " AI-Driven Real-Time Intrusion Detection System\n"
+        "============================================================\n\n"
+        " Mode       : LIVE\n"
+        f" Interface  : {args.interface}\n"
+        f" Workers    : {args.workers}\n"
+        " Features   : 78\n\n"
+        " Models     : RF + XGBoost + Isolation Forest + Meta Learner\n"
+        " Monitoring : Prometheus + Grafana\n"
+        " Alerting   : Alertmanager -> Email\n\n"
+        "------------------------------------------------------------\n"
+        " Live Traffic\n"
+        "------------------------------------------------------------"
+    )
+    print(header, flush=True)
+
+    worker_pool = None
+    if args.workers > 1:
+        from inference.worker_pool import InferenceWorkerPool
+        def _on_result(result, flow):
+            _handle_prediction(result, alert_mgr, reg, flow=flow)
+        worker_pool = InferenceWorkerPool(
+            n_workers=args.workers,
+            on_result=_on_result,
+            maxsize=512,
+        )
+        worker_pool.start()
+
+    def on_flow_complete(flow) -> None:
+        try:
+            reg.src_ip_flows.labels(src_ip=flow.key.src_ip).inc()
+            reg.dst_ip_flows.labels(dst_ip=flow.key.dst_ip).inc()
+            reg.protocol_flows.labels(protocol=str(flow.key.protocol)).inc()
+
+            if worker_pool is not None:
+                worker_pool.submit(flow)
+            else:
+                features = extract_features(flow)
+                result = predict_flow(features)
+                _handle_prediction(result, alert_mgr, reg, flow=flow)
+        except Exception as exc:
+            logger.exception("on_flow_complete error: %s", exc)
+
+    capture_error = None
+    capture_failed_event = threading.Event()
+
+    try:
+        capture = PacketCapture(
+            interface=args.interface,
+            on_flow_complete=on_flow_complete,
+            filter_bpf=args.filter,
+            idle_timeout=args.idle_timeout,
+            absolute_timeout=args.absolute_timeout,
+        )
+    except Exception as exc:
+        print("\n Status     : ERROR")
+        print(f" Reason     : {exc}\n")
+        sys.exit(1)
+
+    def _run_sniff():
+        nonlocal capture_error
+        try:
+            capture.start(packet_count=0)
+        except Exception as exc:
+            capture_error = exc
+            capture_failed_event.set()
+            shutdown_event.set()
+
+    cap_thread = threading.Thread(target=_run_sniff, daemon=True, name="packet-capture")
+    cap_thread.start()
+
+    # Wait up to 1.5s to see if capture failed immediately
+    if capture_failed_event.wait(timeout=1.5):
+        print("\n Status     : ERROR")
+        print(f" Reason     : {capture_error}\n")
+        sys.exit(1)
+
+    if not cap_thread.is_alive():
+        print("\n Status     : ERROR")
+        print(f" Reason     : {capture_error or 'Packet capture thread exited unexpectedly'}\n")
+        sys.exit(1)
+
+    from monitoring.metrics_exporter import start_metrics_export_thread
+    start_metrics_export_thread(alert_mgr=alert_mgr, flow_mgr=capture._flow_manager, interval=5.0)
+
+    last_pkts = 0
+    last_flows = 0
+    last_time = time.time()
+
+    def _live_ticker():
+        nonlocal last_pkts, last_flows, last_time
+        while not shutdown_event.wait(timeout=2.0):
+            try:
+                now = time.time()
+                dt = max(now - last_time, 1e-3)
+                curr_pkts = int(reg.packets_processed_total._value.get())
+                curr_flows = int(reg.flows_completed_total._value.get())
+                preds = int(reg.predictions_total._value.get())
                 attacks = int(reg.attacks_detected_total._value.get())
-                benign  = int(reg.benign_detected_total._value.get())
-                alerts  = alert_mgr.stats().get("total_alerts", 0)
-                cpu     = f"{psutil.cpu_percent():.0f}%" if _psutil else "n/a"
-                mem     = f"{psutil.virtual_memory().percent:.0f}%" if _psutil else "n/a"
+                benign = int(reg.benign_detected_total._value.get())
+                alerts = alert_mgr.stats().get("total_alerts", 0)
+
+                pkt_rate = max(0.0, (curr_pkts - last_pkts) / dt)
+                flow_rate = max(0.0, (curr_flows - last_flows) / dt)
+
+                last_pkts = curr_pkts
+                last_flows = curr_flows
+                last_time = now
+
+                status = "Capturing" if cap_thread.is_alive() else "Stopped"
                 print(
-                    f"\r  📡 Packets:{packets:>7}  Flows:{flows:>6}  "
-                    f"Pred:{preds:>6}  Attacks:{attacks:>5}  "
-                    f"Benign:{benign:>6}  Alerts:{alerts:>4}  "
-                    f"CPU:{cpu}  Mem:{mem}",
-                    end="", flush=True
+                    f"\r Packets/s: {pkt_rate:>6,.0f} | Flows/s: {flow_rate:>4,.0f} | "
+                    f"Pred: {preds:>6,} | Attacks: {attacks:>4,} | "
+                    f"Benign: {benign:>6,} | Alerts: {alerts:>4,} | "
+                    f"Status: {status}  ",
+                    end="", flush=True,
                 )
-            except OSError:
+            except Exception:
                 pass
 
-    t = threading.Thread(target=_ticker, daemon=True, name="status-ticker")
-    t.start()
+    ticker = threading.Thread(target=_live_ticker, daemon=True, name="live-ticker")
+    ticker.start()
+
+    while not shutdown_event.is_set():
+        if not cap_thread.is_alive():
+            print("\n Status     : ERROR")
+            print(f" Reason     : {capture_error or 'Capture thread crashed'}\n")
+            break
+        time.sleep(0.5)
+
+    capture.stop()
+    if worker_pool is not None:
+        worker_pool.shutdown(wait=True)
+    print("\n\nLive capture stopped cleanly.")
 
 
 def main() -> None:
@@ -357,207 +516,54 @@ def main() -> None:
         _list_interfaces()
         return
 
-    (
-        PacketCapture, extract_features, predict_flow,
-        AlertManager, start_metrics_server, start_metrics_export_thread,
-        reg, FlowManager,
-    ) = _import_components()
+    from alerts.alert_manager import AlertManager
+    from monitoring.metrics_server import start_metrics_server
+    from monitoring import metrics_registry as reg
 
     # Set system status to running
     reg.system_status.set(1)
 
-    # -- Load models (MODELS singleton already loaded on import) --------------
-    from inference.model_loader import MODELS
-    models_ok = MODELS is not None and len(MODELS.feature_columns) == 78
-
-    # -- Initialise AlertManager ---------------------------------------------
-    alert_mgr_ok = False
+    # Initialize AlertManager
     try:
         alert_mgr = AlertManager()
-        alert_mgr_ok = True
     except Exception as exc:
-        logger.error("AlertManager init failed: %s", exc)
+        print("\n Status     : ERROR")
+        print(f" Reason     : AlertManager init failed: {exc}\n")
         sys.exit(1)
 
-    # -- Prometheus metrics server -------------------------------------------
-    start_metrics_server(port=args.metrics_port)
+    # Prometheus metrics server
+    try:
+        start_metrics_server(port=args.metrics_port)
+    except OSError as exc:
+        logger.warning("Prometheus metrics server port %d already in use: %s", args.metrics_port, exc)
 
-    # -- Inference worker pool (multi-threaded if --workers > 1) -------------
-    worker_pool = None
-    worker_pool_ok = False
-    if args.workers > 1:
-        from inference.worker_pool import InferenceWorkerPool
-        def _on_result(result, flow):
-            alert_mgr.process(result, flow)
-        worker_pool = InferenceWorkerPool(
-            n_workers = args.workers,
-            on_result = _on_result,
-            maxsize   = 512,
-        )
-        worker_pool.start()
-        worker_pool_ok = True
-    else:
-        worker_pool_ok = False   # single-thread mode — not a failure
-
-    # -- Optional FastAPI REST/WebSocket server -------------------------------
+    # Optional FastAPI server
     if args.api:
         _start_api_server(args.api_port, alert_mgr)
-        time.sleep(1.5)   # give uvicorn a moment to bind before health-check
 
-    # -- Shutdown flag -------------------------------------------------------
-    _shutdown = threading.Event()
+    shutdown_event = threading.Event()
 
     def _handle_signal(signum, frame):
-        print("\n", flush=True)   # end the rolling status line cleanly
-        logger.info("Shutdown signal received — stopping capture...")
-        _shutdown.set()
-
-    signal.signal(signal.SIGINT,  _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    # -- Flow completion callback --------------------------------------------
-    capture = None
-
-    def on_flow_complete(flow) -> None:
-        """
-        Called by FlowManager when a flow is complete (TCP FIN/RST or timeout).
-        Runs in the capture thread — must be fast and non-blocking.
-        """
+        print("\n\n[IDS] Shutdown signal received (Ctrl+C). Exiting...", flush=True)
         try:
-            logger.info(
-                "[Pipeline] Flow received | %s→%s:%d | proto=%d | pkts=%d | bytes=%d",
-                flow.key.src_ip, flow.key.dst_ip, flow.key.dst_port,
-                flow.key.protocol, flow.total_packets, flow.total_bytes,
-            )
+            reg.system_status.set(0)
+        except Exception:
+            pass
+        os._exit(0)
 
-            reg.src_ip_flows.labels(src_ip=flow.key.src_ip).inc()
-            reg.dst_ip_flows.labels(dst_ip=flow.key.dst_ip).inc()
-            reg.protocol_flows.labels(protocol=str(flow.key.protocol)).inc()
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _handle_signal)
 
-            if worker_pool is not None:
-                worker_pool.submit(flow)
-                logger.info("[Pipeline] Flow submitted to worker pool")
-            else:
-                pipeline_start = time.perf_counter()
-                reg.flows_completed_total.inc()
-                reg.flows_total.inc()
-
-                # --- Feature Extraction ---
-                feature_start = time.perf_counter()
-                features = extract_features(flow)
-                feat_ms = (time.perf_counter() - feature_start) * 1000
-                reg.feature_extraction_latency_ms.observe(feat_ms)
-
-                # --- ML Prediction ---
-                result = predict_flow(features)
-                reg.processing_time_ms.observe(
-                    (time.perf_counter() - pipeline_start) * 1000
-                )
-
-                reg.predictions_total.inc()
-                reg.inference_latency_ms.observe(result.get("latency_ms", 0))
-
-                attack_type        = result.get("attack_type", "BENIGN")
-                attack_probability = float(result.get("attack_probability", 0.0) or 0.0)
-                attack_confidence  = float(result.get("attack_confidence", 0.0) or 0.0)
-                iso_score          = float(result.get("iso_score", 0.0) or 0.0)
-                is_attack          = bool(result.get("is_attack", False))
-
-                logger.info(
-                    "[Pipeline] Prediction | is_attack=%s | type=%s | prob=%.4f "
-                    "| conf=%.4f | iso=%.4f | latency=%.2fms",
-                    is_attack, attack_type, attack_probability,
-                    attack_confidence, iso_score, result.get("latency_ms", 0),
-                )
-
-                reg.xgb_probability.set(float(result.get("xgb_probability", 0.0) or 0.0))
-                reg.rf_probability.set(float(result.get("rf_probability", 0.0) or 0.0))
-                reg.model_confidence.set(attack_confidence)
-                reg.iso_score.set(iso_score)
-                reg.meta_probability.set(float(result.get("meta_probability", 0.0) or 0.0))
-
-                if is_attack:
-                    reg.attacks_detected_total.inc()
-                    reg.attack_total.inc()
-                    reg.attacks_by_type.labels(type=attack_type).inc()
-                    if attack_confidence >= 0.85:
-                        reg.high_confidence_attacks.inc()
-                else:
-                    reg.benign_detected_total.inc()
-                    reg.benign_total.inc()
-                if iso_score > 0:
-                    reg.anomalies_total.inc()
-                reg.attack_type_total.labels(type=attack_type).inc()
-
-                alert_mgr.process(result, flow)
-
-        except Exception as exc:
-            logger.exception("on_flow_complete error: %s", exc)
-
-    # -- Start capture in background thread ----------------------------------
-    logger.info(
-        "Starting packet capture on interface '%s' | idle_timeout=%.0fs | absolute_timeout=%.0fs",
-        args.interface, args.idle_timeout, args.absolute_timeout,
-    )
-    capture_ok = False
     try:
-        capture = PacketCapture(
-            interface        = args.interface,
-            on_flow_complete = on_flow_complete,
-            filter_bpf       = args.filter,
-            idle_timeout     = args.idle_timeout,
-            absolute_timeout = args.absolute_timeout,
-        )
-        # -- Metrics exporter (pushes system gauges every 5 s) -------------------
-        start_metrics_export_thread(alert_mgr=alert_mgr, flow_mgr=capture._flow_manager, interval=5.0)
-
-        cap_thread = threading.Thread(
-            target=capture.start,
-            kwargs={"packet_count": 0},
-            daemon=True,
-            name="packet-capture",
-        )
-        cap_thread.start()
-        time.sleep(0.5)   # brief pause so capture reports started before dashboard
-        capture_ok = cap_thread.is_alive()
-
-        # -- Print startup health dashboard ----------------------------------
-        _print_health_dashboard(
-            args, models_ok, alert_mgr_ok,
-            worker_pool_ok=(args.workers > 1),
-            capture_ok=capture_ok,
-        )
-
-        # -- Start live rolling status line ----------------------------------
-        _start_status_ticker(reg, alert_mgr, _shutdown, interval=10.0)
-
-        # Block main thread until shutdown signal
-        while not _shutdown.is_set():
-            time.sleep(0.5)
-
-    except KeyboardInterrupt:
-        print("\n", flush=True)
-        logger.info("KeyboardInterrupt received.")
-    except Exception as exc:
-        logger.exception("Fatal error in capture: %s", exc)
+        if args.live:
+            _run_live_mode(args, alert_mgr, reg, shutdown_event)
+        else:
+            _run_test_mode(args, alert_mgr, reg, shutdown_event)
     finally:
-        logger.info("Shutting down IDS...")
         reg.system_status.set(0)
-        if capture:
-            capture.stop()
-        time.sleep(1.0)
-        if worker_pool is not None:
-            worker_pool.shutdown(wait=True)
-        stats = alert_mgr.stats()
-        print("\n")
-        logger.info(
-            "Session summary | flows=%d | alerts=%d | suppressed=%d | deduped=%d",
-            stats["total_flows"],
-            stats["total_alerts"],
-            stats["total_suppressed"],
-            stats["total_deduped"],
-        )
-        logger.info("IDS stopped cleanly.")
+        os._exit(0)
 
 
 if __name__ == "__main__":

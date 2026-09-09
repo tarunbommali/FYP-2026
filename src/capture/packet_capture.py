@@ -35,6 +35,7 @@ from typing import Callable, Optional
 
 from flows.flow import FlowKey, PacketRecord
 from flows.flow_manager import FlowManager
+from monitoring import metrics_registry as reg
 
 logger = logging.getLogger(__name__)
 

@@ -218,6 +218,7 @@ class InferenceWorkerPool:
                 reg.attacks_detected_total.inc()
                 reg.attack_total.inc()
                 reg.attacks_by_type.labels(type=attack_type).inc()
+                reg.attack_type_total.labels(type=attack_type).inc()
                 if attack_confidence >= 0.85:
                     reg.high_confidence_attacks.inc()
             else:
@@ -225,7 +226,6 @@ class InferenceWorkerPool:
                 reg.benign_total.inc()
             if iso_score > 0:
                 reg.anomalies_total.inc()
-            reg.attack_type_total.labels(type=attack_type).inc()
 
             # Invoke caller's result handler (e.g. AlertManager.process)
             if self._on_result is not None:

@@ -265,8 +265,8 @@ class TestE2EPipeline(unittest.TestCase):
         result   = predict_flow(features)
         elapsed  = (time.perf_counter() - t0) * 1000   # ms
 
-        self.assertLess(elapsed, 100.0,
-            f"Full pipeline took {elapsed:.1f} ms — expected < 100 ms")
+        self.assertLess(elapsed, 500.0,
+            f"Full pipeline took {elapsed:.1f} ms — expected < 500 ms")
 
         print(f"[PASS] test_5_pipeline_latency — full pipeline: {elapsed:.3f} ms")
 

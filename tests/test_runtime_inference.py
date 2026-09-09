@@ -7,11 +7,9 @@ pass successfully through the deployed predict_flow() runtime engine.
 """
 
 import os
-# pyrefly: ignore [missing-import]
-import pytest
+import unittest
 import pandas as pd
 
-# pyrefly: ignore [missing-import]
 from inference.predictor import predict_flow
 
 
@@ -20,15 +18,13 @@ X_TEST_PATH = os.path.join(TEST_DATA_DIR, "X_test_binary.parquet")
 Y_TEST_PATH = os.path.join(TEST_DATA_DIR, "y_test_binary.parquet")
 
 
-@pytest.mark.skipif(
-    not (os.path.exists(X_TEST_PATH) and os.path.exists(Y_TEST_PATH)),
-    reason="Test parquet files not present in data/processed/",
-)
-class TestRuntimeInference:
+class TestRuntimeInference(unittest.TestCase):
     """Test offline flow-level runtime inference against real held-out flow vectors."""
 
     @classmethod
-    def setup_class(cls):
+    def setUpClass(cls):
+        if not (os.path.exists(X_TEST_PATH) and os.path.exists(Y_TEST_PATH)):
+            raise unittest.SkipTest("Test parquet files not present in data/processed/")
         # Load a small slice of 20 test flows (10 benign, 10 attack)
         X = pd.read_parquet(X_TEST_PATH)
         y = pd.read_parquet(Y_TEST_PATH)["Label"].astype(int)
@@ -75,3 +71,8 @@ class TestRuntimeInference:
 
         accuracy = correct / total
         assert accuracy >= 0.85, f"Expected runtime accuracy >= 85%, got {accuracy * 100:.1f}%"
+
+
+if __name__ == "__main__":
+    unittest.main()
+

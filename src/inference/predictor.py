@@ -6,7 +6,12 @@ import logging
 import math
 import threading
 import time
+import warnings
 import numpy as np
+
+# Suppress feature names warnings and XGBoost serialization warnings during high-throughput inference
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 from inference.model_loader import MODELS
 from inference.schemas import PredictionResult
@@ -16,7 +21,7 @@ from monitoring import metrics_registry as reg
 logger = logging.getLogger(__name__)
 
 _last_attack_lock = threading.Lock()
-_current_attack_type = "BENIGN"
+_current_attack_type = None
 
 
 def _update_prediction_metrics(
@@ -29,10 +34,11 @@ def _update_prediction_metrics(
 ) -> None:
     global _current_attack_type
     with _last_attack_lock:
-        if _current_attack_type != attack_type:
-            reg.last_attack_type.labels(type=_current_attack_type).set(0)
+        if attack_type != "BENIGN":
+            if _current_attack_type and _current_attack_type != attack_type:
+                reg.last_attack_type.labels(type=_current_attack_type).set(0)
             _current_attack_type = attack_type
-        reg.last_attack_type.labels(type=attack_type).set(1)
+            reg.last_attack_type.labels(type=attack_type).set(1)
 
     reg.attack_confidence.set(confidence)
     reg.rf_probability.set(rf_prob)

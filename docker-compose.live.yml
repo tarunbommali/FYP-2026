@@ -1,0 +1,43 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ids_live_prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: ids_live_alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ids_live_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=frser-sqlite-datasource
+      - GF_PLUGINS_ALLOW_UNSIGNED=frser-sqlite-datasource
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./data/alerts:/data/alerts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
